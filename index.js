@@ -1,58 +1,40 @@
-/**
- * ST Book Review - SillyTavern extension shell v0.1.0
- * 第一阶段只验证：扩展能加载、顶部图标能出现、面板能打开。
- */
+/** ST Book Review v0.2.0 - adaptive floating bubble shell */
 import { renderExtensionTemplateAsync } from '/scripts/extensions.js';
-
-const EXT_NAME = 'ST-book-review';
-const EXT_FOLDER = `third-party/${EXT_NAME}`;
-
+const EXT_FOLDER = 'third-party/ST-book-review';
+function syncViewport(root) {
+    const v = window.visualViewport;
+    root.style.setProperty('--stbr-vw', `${v?.width || innerWidth}px`);
+    root.style.setProperty('--stbr-vh', `${v?.height || innerHeight}px`);
+    root.style.setProperty('--stbr-vx', `${v?.offsetLeft || 0}px`);
+    root.style.setProperty('--stbr-vy', `${v?.offsetTop || 0}px`);
+}
 async function init() {
+    if (document.querySelector('#stbr-root')) return;
     try {
         const html = await renderExtensionTemplateAsync(EXT_FOLDER, 'template');
-        const drawer = document.createElement('div');
-        drawer.id = 'stbr_drawer';
-        drawer.className = 'drawer-content closedDrawer';
-        drawer.innerHTML = html;
-
-        const icon = document.createElement('div');
-        icon.id = 'stbr_drawer_icon';
-        icon.className = 'drawer-icon fa-solid fa-comments closedIcon';
-        icon.title = 'ST Book Review';
-        icon.setAttribute('aria-label', '打开书评插件');
-
-        const anchor = document.querySelector('#extensions_settings') || document.body;
-        anchor.append(drawer);
-
-        const topBar = document.querySelector('#top-bar')
-            || document.querySelector('#top-bar-left')
-            || document.querySelector('#top-bar-right')
-            || document.querySelector('#extensionsMenu');
-        (topBar || document.body).append(icon);
-
-        const close = () => {
-            drawer.classList.remove('openDrawer');
-            drawer.classList.add('closedDrawer');
-            icon.classList.remove('openIcon');
-            icon.classList.add('closedIcon');
-        };
-        const open = () => {
-            drawer.classList.remove('closedDrawer');
-            drawer.classList.add('openDrawer');
-            icon.classList.remove('closedIcon');
-            icon.classList.add('openIcon');
-        };
-        icon.addEventListener('click', () => drawer.classList.contains('openDrawer') ? close() : open());
-        drawer.querySelector('#stbr-close')?.addEventListener('click', close);
-        drawer.querySelector('#stbr-test')?.addEventListener('click', () => {
-            const result = drawer.querySelector('#stbr-test-result');
-            if (result) result.textContent = '插件外壳运行正常。';
+        const root = document.createElement('div');
+        root.id = 'stbr-root';
+        root.innerHTML = `<button type="button" id="stbr-fab" aria-label="打开书评" aria-expanded="false"><i class="fa-solid fa-comments"></i><span id="stbr-fab-badge" hidden>0</span></button><div id="stbr-overlay" hidden><button type="button" id="stbr-backdrop" aria-label="关闭书评面板"></button><section id="stbr-dialog" role="dialog" aria-modal="true" aria-label="ST Book Review">${html}</section></div>`;
+        document.body.append(root);
+        const fab = root.querySelector('#stbr-fab');
+        const overlay = root.querySelector('#stbr-overlay');
+        const close = () => { overlay.hidden = true; fab.setAttribute('aria-expanded', 'false'); };
+        const open = () => { syncViewport(root); overlay.hidden = false; fab.setAttribute('aria-expanded', 'true'); };
+        fab.addEventListener('click', open);
+        root.querySelector('#stbr-backdrop')?.addEventListener('click', close);
+        root.querySelector('#stbr-close')?.addEventListener('click', close);
+        root.querySelector('#stbr-test')?.addEventListener('click', () => {
+            const result = root.querySelector('#stbr-test-result');
+            if (result) result.textContent = '悬浮气泡与面板运行正常。';
         });
-
-        console.log('[ST Book Review] v0.1.0 loaded');
-    } catch (error) {
-        console.error('[ST Book Review] load failed:', error);
-    }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && !overlay.hidden) close(); });
+        const refresh = () => syncViewport(root);
+        window.addEventListener('resize', refresh, { passive: true });
+        window.addEventListener('orientationchange', refresh, { passive: true });
+        window.visualViewport?.addEventListener('resize', refresh, { passive: true });
+        window.visualViewport?.addEventListener('scroll', refresh, { passive: true });
+        syncViewport(root);
+        console.log('[ST Book Review] v0.2.0 loaded');
+    } catch (error) { console.error('[ST Book Review] load failed:', error); }
 }
-
 jQuery(init);
