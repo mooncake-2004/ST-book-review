@@ -220,7 +220,7 @@ function renderSettings() {
         <label class="stbr-label" for="stbr-compression-limit">达到多少条消息时压缩</label><input id="stbr-compression-limit" class="stbr-input" type="number" min="6" max="200" value="${Number(api.compressionLimit) || 30}"><p class="stbr-hint">例如填 30：首次累计 30 条消息后生成一份本地记忆；记忆占 1 条，此后再累计 29 条新消息时重新压缩。</p>
       </div></details>
       <section class="stbr-section"><label class="stbr-label" for="stbr-context-depth">侧聊读取正文层数</label><input id="stbr-context-depth" class="stbr-input" type="number" min="2" max="50" value="${state.settings.contextDepth}"><p class="stbr-hint">角色私聊和普通聊天只读取最近这些楼层，独立聊天记录另行保存。</p></section>
-      <section class="stbr-section stbr-about"><b>ST Book Review · 1.7.0</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
+      <section class="stbr-section stbr-about"><b>ST Book Review · 1.7.1</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
 function render() {
@@ -235,7 +235,7 @@ function render() {
     const body = root.querySelector('#stbr-body');
     body.classList.toggle('stbr-messages-body', activeTab === 'messages');
     body.innerHTML = activeTab === 'reviews' ? renderReviewTab() : activeTab === 'messages' ? renderMessages() : renderSettings();
-    requestAnimationFrame(() => { const log = root.querySelector('#stbr-chat-log'); if (log) log.scrollTop = log.scrollHeight; });
+    requestAnimationFrame(() => { syncFabPosition(); const log = root.querySelector('#stbr-chat-log'); if (log) log.scrollTop = log.scrollHeight; });
 }
 
 function normalizeComments(items = []) {
@@ -528,11 +528,36 @@ function syncExtensionControls() {
     Object.entries(mappings).forEach(([id, checked]) => { const input = document.getElementById(id); if (input) input.checked = Boolean(checked); });
 }
 
+function syncFabPosition() {
+    const fab = root?.querySelector('#stbr-fab');
+    if (!fab || fab.hidden) return;
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft || 0;
+    const top = viewport?.offsetTop || 0;
+    const width = viewport?.width || window.innerWidth;
+    const height = viewport?.height || window.innerHeight;
+    const mobile = width <= 600;
+    const fabWidth = mobile ? 48 : Math.max(48, fab.offsetWidth || 76);
+    const fabHeight = mobile ? 48 : Math.max(46, fab.offsetHeight || 46);
+    const x = Math.max(left + 8, left + width - fabWidth - (mobile ? 12 : 18));
+    const y = Math.max(top + 12, top + height - fabHeight - (mobile ? 72 : 106));
+    fab.style.setProperty('left', `${x}px`, 'important');
+    fab.style.setProperty('top', `${y}px`, 'important');
+    fab.style.setProperty('right', 'auto', 'important');
+    fab.style.setProperty('bottom', 'auto', 'important');
+}
+
+function fallbackSettingsHtml() {
+    return `<div id="stbr-extension-settings" class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b><i class="fa-solid fa-book-open"></i> 千页书评</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content stbr-ext-settings-content"><p class="stbr-ext-description">小说楼层书评与独立私信空间。</p><label class="checkbox_label"><input id="stbr-ext-plugin-toggle" type="checkbox"><span><b>启用插件</b><small>关闭后隐藏气泡和界面入口。</small></span></label><label class="checkbox_label"><input id="stbr-ext-bubble-toggle" type="checkbox"><span><b>显示悬浮气泡</b><small>适配桌面和手机可视区域。</small></span></label><label class="checkbox_label"><input id="stbr-ext-interface-toggle" type="checkbox"><span><b>显示界面入口</b><small>控制魔法棒菜单入口。</small></span></label><button id="stbr-ext-open" class="menu_button menu_button_icon"><i class="fa-solid fa-up-right-from-square"></i><span>打开千页书评</span></button></div></div>`;
+}
+
 async function mountExtensionSettings() {
     if (document.querySelector('#stbr-extension-settings')) return;
-    const container = document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings');
+    const container = document.querySelector('#extensions_settings2, #extensions_settings, .extensions_settings, [id*="extensions_settings"]');
     if (!container) { setTimeout(mountExtensionSettings, 1200); return; }
-    const html = await renderExtensionTemplateAsync(EXT_FOLDER, 'settings');
+    let html;
+    try { html = await renderExtensionTemplateAsync(EXT_FOLDER, 'settings'); }
+    catch (error) { console.warn('[ST Book Review] settings template fallback:', error); html = fallbackSettingsHtml(); }
     const wrapper = document.createElement('div'); wrapper.innerHTML = html; container.append(...wrapper.children);
     const bind = (id, key) => document.getElementById(id)?.addEventListener('change', async event => { state.settings[key] = event.target.checked; await saveState(); render(); });
     bind('stbr-ext-plugin-toggle', 'pluginEnabled');
@@ -553,10 +578,16 @@ async function init() {
     root.addEventListener('click', onClick); root.addEventListener('submit', onSubmit); root.addEventListener('change', onChange); root.addEventListener('input', onInput);
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !root.querySelector('#stbr-overlay').hidden) closePanel(); });
     addMagicWandEntry(); setTimeout(addMagicWandEntry, 1500);
-    await mountExtensionSettings();
+    render();
+    requestAnimationFrame(syncFabPosition);
+    window.addEventListener('resize', syncFabPosition, { passive: true });
+    window.addEventListener('orientationchange', syncFabPosition, { passive: true });
+    window.visualViewport?.addEventListener('resize', syncFabPosition, { passive: true });
+    window.visualViewport?.addEventListener('scroll', syncFabPosition, { passive: true });
+    mountExtensionSettings().catch(error => console.warn('[ST Book Review] settings mount failed:', error));
     const events = context.eventSource; const types = context.eventTypes || window.event_types || {};
     [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); ensureMessagingState(); activeMessageId = ''; render(); }));
-    render(); console.info('[ST Book Review] 1.7.0 loaded');
+    console.info('[ST Book Review] 1.7.1 loaded');
 }
 
 jQuery(init);
