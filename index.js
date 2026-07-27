@@ -2,7 +2,9 @@ import { renderExtensionTemplateAsync } from '/scripts/extensions.js';
 
 const EXT_FOLDER = 'third-party/ST-book-review';
 const STORE_KEY = 'st_book_review_v1';
-const DEFAULTS = { bubbleEnabled: true, contextDepth: 12, reviewerName: '', apiMode: 'main', apiBaseUrl: '', apiKey: '', apiModel: '', apiModels: [] };
+const DEFAULT_IN_PROMPT = `你就是小说世界里的“{name}”，正在故事内用即时消息和用户聊天。你必须以角色本人身份回应，不知道自己在被扮演。像微信聊天一样自然、口语化、简短，通常1到3句，尽量不超过80字；不要写旁白、动作描写、标题或长段分析。`;
+const DEFAULT_OUT_PROMPT = `你是现实/作品外负责扮演“{name}”的演员或扮演者，不是“{name}”本人。绝对不要用角色本人的身份、记忆或口吻冒充角色；你清楚角色只是你出演的对象，可以从演员视角聊表演、剧本、角色感受、剧情和日常。像微信聊天一样自然、口语化、简短，通常1到3句，尽量不超过80字。`;
+const DEFAULTS = { bubbleEnabled: true, contextDepth: 12, reviewerName: '', apiMode: 'main', apiBaseUrl: '', apiKey: '', apiModel: '', apiModels: [], inChatPrompt: DEFAULT_IN_PROMPT, outChatPrompt: DEFAULT_OUT_PROMPT, compressionEnabled: true, compressionLimit: 30 };
 let state = null;
 let root = null;
 let context = null;
@@ -21,19 +23,32 @@ function getContext() {
 }
 
 function emptyState() {
-    return { settings: { ...DEFAULTS }, reviews: {}, rooms: { character: [], normal: [] }, contacts: [{ id: 'screenwriter', name: '编剧', type: 'screenwriter' }], dmRooms: { screenwriter: [] } };
+    return { settings: { ...DEFAULTS }, reviews: {}, rooms: { character: [], normal: [] }, contacts: [{ id: 'screenwriter', name: '编剧', type: 'screenwriter' }], dmRooms: { screenwriter: [] }, dmMemories: {}, dmContextStarts: {} };
+}
+
+function roomKey(contact, mode = contact.chatMode) {
+    return contact.type === 'screenwriter' ? 'screenwriter' : `${contact.id}:${mode === 'out' ? 'out' : 'in'}`;
 }
 
 function ensureMessagingState() {
     state.contacts = Array.isArray(state.contacts) && state.contacts.length ? state.contacts : [{ id: 'screenwriter', name: '编剧', type: 'screenwriter' }];
     if (!state.contacts.some(c => c.id === 'screenwriter')) state.contacts.unshift({ id: 'screenwriter', name: '编剧', type: 'screenwriter' });
     state.dmRooms ||= {};
+    state.dmMemories ||= {};
+    state.dmContextStarts ||= {};
     state.contacts.forEach(contact => { contact.chatMode ||= contact.type === 'screenwriter' ? 'out' : 'in'; });
     state.dmRooms.screenwriter ||= state.rooms?.normal || [];
     if (state.rooms?.character?.length && !state.contacts.some(c => c.id === 'legacy-character')) {
         state.contacts.push({ id: 'legacy-character', name: context.name2 || '当前角色', type: 'character' });
         state.dmRooms['legacy-character'] = state.rooms.character;
     }
+    state.contacts.filter(c => c.type !== 'screenwriter').forEach(contact => {
+        if (state.dmRooms[contact.id] && !state.dmRooms[roomKey(contact)]) {
+            state.dmRooms[roomKey(contact)] = state.dmRooms[contact.id]; delete state.dmRooms[contact.id];
+        }
+        state.dmRooms[`${contact.id}:in`] ||= [];
+        state.dmRooms[`${contact.id}:out`] ||= [];
+    });
     if (!state.contacts.some(c => c.id === activeContactId)) activeContactId = 'screenwriter';
 }
 
@@ -47,7 +62,8 @@ function loadState() {
     const stored = metadata?.[STORE_KEY];
     if (stored) return { ...emptyState(), ...structuredClone(stored), settings: { ...DEFAULTS, ...(stored.settings || {}) } };
     try {
-        return { ...emptyState(), ...JSON.parse(localStorage.getItem(`${STORE_KEY}:${chatKey()}`) || '{}') };
+        const storedLocal = JSON.parse(localStorage.getItem(`${STORE_KEY}:${chatKey()}`) || '{}');
+        return { ...emptyState(), ...storedLocal, settings: { ...DEFAULTS, ...(storedLocal.settings || {}) } };
     } catch { return emptyState(); }
 }
 
@@ -165,16 +181,18 @@ function renderReviewTab() {
 function renderMessages() {
     ensureMessagingState();
     const contact = state.contacts.find(c => c.id === activeContactId) || state.contacts[0];
-    const history = state.dmRooms[contact.id] ||= [];
+    const key = roomKey(contact);
+    const history = state.dmRooms[key] ||= [];
     const contacts = state.contacts.map(c => `<button class="stbr-contact ${c.id === contact.id ? 'active' : ''}" data-action="select-contact" data-id="${c.id}"><span class="stbr-avatar">${escapeHtml(c.name.slice(0, 1))}</span><span>${escapeHtml(c.name)}</span>${c.type !== 'screenwriter' ? `<i data-action="remove-contact" data-id="${c.id}" title="删除联系人" class="fa-solid fa-xmark"></i>` : ''}</button>`).join('');
     const messages = history.map(m => `<div class="stbr-bubble ${m.role}" data-message-id="${m.id}"><div class="stbr-message-wrap"><span>${escapeHtml(m.content)}</span>${m.role === 'assistant' ? `<div class="stbr-message-actions"><button data-action="refresh-message" data-contact-id="${contact.id}" data-id="${m.id}"><i class="fa-solid fa-rotate"></i> 刷新</button><button data-action="delete-message" data-contact-id="${contact.id}" data-id="${m.id}"><i class="fa-solid fa-trash"></i> 删除</button></div>` : ''}</div></div>`).join('');
-    const typing = typingContacts.has(contact.id) ? '<div class="stbr-bubble assistant stbr-typing"><div class="stbr-message-wrap"><span><i class="fa-solid fa-ellipsis fa-beat-fade"></i> 回复中</span></div></div>' : '';
+    const typing = typingContacts.has(key) ? '<div class="stbr-bubble assistant stbr-typing"><div class="stbr-message-wrap"><span><i class="fa-solid fa-ellipsis fa-beat-fade"></i> 回复中</span></div></div>' : '';
+    const memory = state.dmMemories[key] ? `<details class="stbr-memory-note"><summary><i class="fa-solid fa-brain"></i> 已生成本地压缩记忆</summary><p>${escapeHtml(state.dmMemories[key])}</p></details>` : '';
     return `<div class="stbr-messenger"><aside class="stbr-contact-pane"><div class="stbr-contact-title">私信</div><div class="stbr-contact-list">${contacts}</div><form id="stbr-add-contact" class="stbr-add-contact"><input class="stbr-input" name="name" maxlength="30" placeholder="输入人物名"><button title="新增私信人物"><i class="fa-solid fa-plus"></i></button></form></aside>
       <section class="stbr-conversation"><header><span class="stbr-avatar">${escapeHtml(contact.name.slice(0, 1))}</span><div><b>${escapeHtml(contact.name)}</b><small>${contact.type === 'screenwriter' ? '可以聊剧情，也可以聊任何日常话题' : '小说角色 · 戏外 1 对 1 私聊'}</small></div></header>
-      <div class="stbr-chat-mode"><button data-action="set-chat-mode" data-mode="in" data-contact-id="${contact.id}" class="${contact.chatMode === 'in' ? 'active' : ''}">剧内 · 角色</button><button data-action="set-chat-mode" data-mode="out" data-contact-id="${contact.id}" class="${contact.chatMode === 'out' ? 'active' : ''}">剧外 · 扮演者</button></div>
-      <div class="stbr-chat-log" id="stbr-chat-log">${messages || (!typing ? `<div class="stbr-empty">你和${escapeHtml(contact.name)}的独立对话从这里开始。</div>` : '')}${typing}</div>
-      <form class="stbr-composer stbr-dm-composer" id="stbr-room-form" data-contact-id="${contact.id}"><textarea class="stbr-input stbr-room-input" name="content" rows="2" placeholder="发消息给${escapeHtml(contact.name)}…" ${typingContacts.has(contact.id) ? 'disabled' : ''}></textarea><button class="stbr-send" title="发送" ${typingContacts.has(contact.id) ? 'disabled' : ''}><i class="fa-solid fa-paper-plane"></i></button></form>
-      <button class="stbr-link-btn stbr-clear" data-action="clear-room" data-contact-id="${contact.id}">清空与${escapeHtml(contact.name)}的对话</button></section></div>`;
+      ${contact.type === 'screenwriter' ? '' : `<div class="stbr-chat-mode"><button data-action="set-chat-mode" data-mode="in" data-contact-id="${contact.id}" class="${contact.chatMode === 'in' ? 'active' : ''}">剧内 · 角色</button><button data-action="set-chat-mode" data-mode="out" data-contact-id="${contact.id}" class="${contact.chatMode === 'out' ? 'active' : ''}">剧外 · 扮演者</button></div>`}
+      ${memory}<div class="stbr-chat-log" id="stbr-chat-log">${messages || (!typing ? `<div class="stbr-empty">你和${escapeHtml(contact.name)}的独立对话从这里开始。</div>` : '')}${typing}</div>
+      <form class="stbr-composer stbr-dm-composer" id="stbr-room-form" data-contact-id="${contact.id}"><textarea class="stbr-input stbr-room-input" name="content" rows="2" placeholder="发消息给${escapeHtml(contact.name)}…" ${typingContacts.has(key) ? 'disabled' : ''}></textarea><button class="stbr-send" title="发送" ${typingContacts.has(key) ? 'disabled' : ''}><i class="fa-solid fa-paper-plane"></i></button></form>
+      <button class="stbr-link-btn stbr-clear" data-action="clear-room" data-room-key="${key}">清空与${escapeHtml(contact.name)}的对话</button></section></div>`;
 }
 
 function renderSettings() {
@@ -191,8 +209,17 @@ function renderSettings() {
     return `<section class="stbr-section"><label class="stbr-toggle-row"><span><b>显示悬浮气泡</b><small>关闭后仍可从魔法棒菜单打开</small></span><input id="stbr-bubble-toggle" type="checkbox" ${state.settings.bubbleEnabled ? 'checked' : ''}><i></i></label></section>
       <section class="stbr-section"><label class="stbr-label" for="stbr-reviewer-name"><i class="fa-solid fa-user-pen"></i> 书评网名</label><input id="stbr-reviewer-name" class="stbr-input" type="text" maxlength="30" value="${escapeHtml(state.settings.reviewerName || '')}" placeholder="默认使用 SillyTavern 用户名"><p class="stbr-hint">你发表书评和回复时显示的名字；留空则使用当前用户名。</p></section>
       <section class="stbr-section"><label class="stbr-label" for="stbr-api-mode"><i class="fa-solid fa-plug"></i> API 连接</label><select id="stbr-api-mode" class="stbr-select"><option value="main" ${api.apiMode === 'main' ? 'selected' : ''}>使用主酒馆 API</option><option value="custom" ${api.apiMode === 'custom' ? 'selected' : ''}>连接其他 OpenAI 兼容 API</option></select>${customApi}</section>
+      <details class="stbr-section stbr-settings-details"><summary><span><i class="fa-solid fa-message"></i> 私信提示词</span><i class="fa-solid fa-chevron-down"></i></summary><div class="stbr-details-body">
+        <div class="stbr-model-head"><label class="stbr-label" for="stbr-in-prompt">剧内聊天提示词</label><button class="stbr-link-btn" data-action="reset-prompt" data-kind="in">恢复默认</button></div><textarea id="stbr-in-prompt" class="stbr-input stbr-prompt-editor" rows="6">${escapeHtml(api.inChatPrompt || DEFAULT_IN_PROMPT)}</textarea>
+        <div class="stbr-model-head"><label class="stbr-label" for="stbr-out-prompt">剧外聊天提示词</label><button class="stbr-link-btn" data-action="reset-prompt" data-kind="out">恢复默认</button></div><textarea id="stbr-out-prompt" class="stbr-input stbr-prompt-editor" rows="7">${escapeHtml(api.outChatPrompt || DEFAULT_OUT_PROMPT)}</textarea>
+        <p class="stbr-hint">可使用 <code>{name}</code> 代表当前联系人。修改后离开输入框即保存。</p>
+      </div></details>
+      <details class="stbr-section stbr-settings-details"><summary><span><i class="fa-solid fa-brain"></i> 本地上下文压缩</span><i class="fa-solid fa-chevron-down"></i></summary><div class="stbr-details-body">
+        <label class="stbr-toggle-row"><span><b>自动压缩私信上下文</b><small>本地提炼，不调用 API；聊天记录仍完整显示</small></span><input id="stbr-compression-enabled" type="checkbox" ${api.compressionEnabled ? 'checked' : ''}><i></i></label>
+        <label class="stbr-label" for="stbr-compression-limit">达到多少条消息时压缩</label><input id="stbr-compression-limit" class="stbr-input" type="number" min="6" max="200" value="${Number(api.compressionLimit) || 30}"><p class="stbr-hint">例如填 30：首次累计 30 条消息后生成一份本地记忆；记忆占 1 条，此后再累计 29 条新消息时重新压缩。</p>
+      </div></details>
       <section class="stbr-section"><label class="stbr-label" for="stbr-context-depth">侧聊读取正文层数</label><input id="stbr-context-depth" class="stbr-input" type="number" min="2" max="50" value="${state.settings.contextDepth}"><p class="stbr-hint">角色私聊和普通聊天只读取最近这些楼层，独立聊天记录另行保存。</p></section>
-      <section class="stbr-section stbr-about"><b>ST Book Review · 1.5.0</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
+      <section class="stbr-section stbr-about"><b>ST Book Review · 1.6.0</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
 function render() {
@@ -313,44 +340,75 @@ async function fetchModels() {
 }
 
 function privateChatPrompt(contact) {
-    const shortStyle = '像微信私聊一样回复：自然、口语化、简短，通常1到3句，尽量不超过80字；不要写长段分析，不要加旁白、动作描写、标题或格式说明。';
-    if (contact.type === 'screenwriter') return contact.chatMode === 'in'
-        ? `${shortStyle} 你是故事里的“编剧”这一角色，正在故事世界内与用户即时聊天；只知道截至当前的剧情。`
-        : `${shortStyle} 你叫“编剧”，但可以聊任何话题，不局限于小说；你处在作品之外，知道角色、剧情和创作过程。`;
-    return contact.chatMode === 'in'
-        ? `${shortStyle} 你就是小说世界里的“${contact.name}”，以角色本人身份和用户聊天，不要出戏。`
-        : `${shortStyle} 你是“${contact.name}”这个角色的扮演者，处在作品之外，知道自己正在扮演该角色，可以聊表演、角色感受、剧情或日常。`;
+    if (contact.type === 'screenwriter') return '你叫“编剧”，是作品之外的微信聊天伙伴，可以聊小说，也可以聊任何日常话题。回复自然、口语化、简短，通常1到3句，尽量不超过80字；不要写长段分析、旁白、动作或标题。';
+    const template = contact.chatMode === 'in' ? state.settings.inChatPrompt : state.settings.outChatPrompt;
+    return String(template || (contact.chatMode === 'in' ? DEFAULT_IN_PROMPT : DEFAULT_OUT_PROMPT)).replaceAll('{name}', contact.name);
 }
 
-async function generatePrivateReply(contact, history, userText) {
-    return await callAI(privateChatPrompt(contact), history, userText);
+function localMemorySummary(previous, messages) {
+    const compact = messages.map(message => {
+        const label = message.role === 'user' ? '用户' : '对方';
+        const text = String(message.content || '').replace(/\s+/g, ' ').trim();
+        return `${label}：${text.length > 180 ? `${text.slice(0, 177)}…` : text}`;
+    }).filter(line => !line.endsWith('：')).join('\n');
+    return [previous, compact].filter(Boolean).join('\n').slice(-5000);
+}
+
+function maybeCompressRoom(key, history) {
+    if (!state.settings.compressionEnabled) return;
+    const limit = Math.max(6, Math.min(200, Number(state.settings.compressionLimit) || 30));
+    const start = Number(state.dmContextStarts[key] || 0);
+    const effectiveCount = history.length - start + (state.dmMemories[key] ? 1 : 0);
+    if (effectiveCount < limit) return;
+    state.dmMemories[key] = localMemorySummary(state.dmMemories[key] || '', history.slice(start));
+    state.dmContextStarts[key] = history.length;
+}
+
+function rebuildRoomMemory(key, history) {
+    delete state.dmMemories[key]; state.dmContextStarts[key] = 0;
+    if (!state.settings.compressionEnabled) return;
+    const limit = Math.max(6, Math.min(200, Number(state.settings.compressionLimit) || 30));
+    if (history.length >= limit) { state.dmMemories[key] = localMemorySummary('', history); state.dmContextStarts[key] = history.length; }
+}
+
+function compressedHistory(key, history, end = history.length) {
+    const start = Math.min(Number(state.dmContextStarts[key] || 0), end);
+    const recent = history.slice(start, end);
+    return state.dmMemories[key] ? [{ role: 'assistant', content: `【本地长期记忆，仅作背景】\n${state.dmMemories[key]}` }, ...recent] : recent;
+}
+
+async function generatePrivateReply(contact, key, history, userText, end = history.length) {
+    return await callAI(privateChatPrompt(contact), compressedHistory(key, history, end), userText);
 }
 
 async function sendRoom(form) {
     ensureMessagingState();
     const contact = state.contacts.find(c => c.id === form.dataset.contactId) || state.contacts[0];
+    const key = roomKey(contact);
     const input = form.elements.content;
     const text = input.value.trim(); if (!text) return;
-    const history = state.dmRooms[contact.id] ||= [];
-    history.push({ id: uid(), role: 'user', content: text, createdAt: now() }); input.value = ''; typingContacts.add(contact.id); render();
+    const history = state.dmRooms[key] ||= [];
+    history.push({ id: uid(), role: 'user', content: text, createdAt: now() }); input.value = ''; typingContacts.add(key); render();
     try {
-        const answer = await generatePrivateReply(contact, history.slice(0, -1), text);
+        const answer = await generatePrivateReply(contact, key, history, text, history.length - 1);
         history.push({ id: uid(), role: 'assistant', content: answer || '（没有收到回复）', createdAt: now() });
     } catch (error) { history.push({ id: uid(), role: 'assistant', content: `发送失败：${error.message}`, createdAt: now(), error: true }); }
-    finally { typingContacts.delete(contact.id); }
+    finally { typingContacts.delete(key); }
+    maybeCompressRoom(key, history);
     await saveState(); render();
 }
 
 async function refreshPrivateMessage(contactId, messageId) {
-    if (typingContacts.has(contactId)) return;
-    ensureMessagingState(); const contact = state.contacts.find(c => c.id === contactId); const history = state.dmRooms[contactId]; if (!contact || !history) return;
+    ensureMessagingState(); const contact = state.contacts.find(c => c.id === contactId); if (!contact) return;
+    const key = roomKey(contact); if (typingContacts.has(key)) return;
+    const history = state.dmRooms[key]; if (!history) return;
     const index = history.findIndex(m => m.id === messageId); if (index < 0 || history[index].role !== 'assistant') return;
     let userIndex = index - 1; while (userIndex >= 0 && history[userIndex].role !== 'user') userIndex--;
     if (userIndex < 0) return;
-    const userText = history[userIndex].content; typingContacts.add(contactId); render();
-    try { history[index].content = await generatePrivateReply(contact, history.slice(0, userIndex), userText) || '（没有收到回复）'; history[index].createdAt = now(); delete history[index].error; await saveState(); }
+    const userText = history[userIndex].content; typingContacts.add(key); render();
+    try { history[index].content = await generatePrivateReply(contact, key, history, userText, userIndex) || '（没有收到回复）'; history[index].createdAt = now(); delete history[index].error; rebuildRoomMemory(key, history); await saveState(); }
     catch (error) { alert(`刷新回复失败：${error.message}`); }
-    finally { typingContacts.delete(contactId); render(); }
+    finally { typingContacts.delete(key); render(); }
 }
 
 async function onSubmit(event) {
@@ -378,6 +436,12 @@ async function onClick(event) {
     if (action === 'reset-reviews') await resetReviews();
     if (action === 'reset-excerpt') await resetExcerpt();
     if (action === 'fetch-models') await fetchModels();
+    if (action === 'reset-prompt') {
+        if (!confirm('恢复这套私信提示词为默认内容？')) return;
+        if (target.dataset.kind === 'in') state.settings.inChatPrompt = DEFAULT_IN_PROMPT;
+        else state.settings.outChatPrompt = DEFAULT_OUT_PROMPT;
+        await saveState(); render();
+    }
     if (action === 'select-contact') { activeContactId = target.dataset.id; render(); }
     if (action === 'set-chat-mode') {
         const contact = state.contacts.find(c => c.id === target.dataset.contactId); if (!contact) return;
@@ -385,13 +449,16 @@ async function onClick(event) {
     }
     if (action === 'refresh-message') await refreshPrivateMessage(target.dataset.contactId, target.dataset.id);
     if (action === 'delete-message' && confirm('删除这条回复？')) {
-        state.dmRooms[target.dataset.contactId] = (state.dmRooms[target.dataset.contactId] || []).filter(m => m.id !== target.dataset.id); await saveState(); render();
+        const contact = state.contacts.find(c => c.id === target.dataset.contactId); if (!contact) return;
+        const key = roomKey(contact); state.dmRooms[key] = (state.dmRooms[key] || []).filter(m => m.id !== target.dataset.id); rebuildRoomMemory(key, state.dmRooms[key]); await saveState(); render();
     }
     if (action === 'remove-contact') {
         event.stopPropagation(); if (!confirm('删除这个私信联系人及全部聊天记录？')) return;
-        state.contacts = state.contacts.filter(c => c.id !== target.dataset.id); delete state.dmRooms[target.dataset.id]; activeContactId = 'screenwriter'; await saveState(); render();
+        state.contacts = state.contacts.filter(c => c.id !== target.dataset.id);
+        [`${target.dataset.id}:in`, `${target.dataset.id}:out`, target.dataset.id].forEach(key => { delete state.dmRooms[key]; delete state.dmMemories[key]; delete state.dmContextStarts[key]; });
+        activeContactId = 'screenwriter'; await saveState(); render();
     }
-    if (action === 'clear-room' && confirm('清空这个独立聊天房间？')) { state.dmRooms[target.dataset.contactId] = []; await saveState(); render(); }
+    if (action === 'clear-room' && confirm('清空这个独立聊天房间？')) { const key = target.dataset.roomKey; state.dmRooms[key] = []; delete state.dmMemories[key]; delete state.dmContextStarts[key]; await saveState(); render(); }
     if (action === 'reply') {
         const text = prompt('回复这条评论：'); if (!text?.trim()) return;
         const comment = reviewFor(selectedMessage()).comments.find(c => c.id === target.dataset.id);
@@ -426,6 +493,10 @@ async function onChange(event) {
     if (event.target.id === 'stbr-api-url') { state.settings.apiBaseUrl = event.target.value.trim(); await saveState(); }
     if (event.target.id === 'stbr-api-key') { state.settings.apiKey = event.target.value.trim(); await saveState(); }
     if (event.target.id === 'stbr-api-model') { state.settings.apiModel = event.target.value; await saveState(); }
+    if (event.target.id === 'stbr-in-prompt') { state.settings.inChatPrompt = event.target.value.trim() || DEFAULT_IN_PROMPT; await saveState(); }
+    if (event.target.id === 'stbr-out-prompt') { state.settings.outChatPrompt = event.target.value.trim() || DEFAULT_OUT_PROMPT; await saveState(); }
+    if (event.target.id === 'stbr-compression-enabled') { state.settings.compressionEnabled = event.target.checked; await saveState(); }
+    if (event.target.id === 'stbr-compression-limit') { state.settings.compressionLimit = Math.max(6, Math.min(200, Number(event.target.value) || 30)); await saveState(); }
 }
 
 function onInput(event) {
@@ -458,7 +529,7 @@ async function init() {
     addMagicWandEntry(); setTimeout(addMagicWandEntry, 1500);
     const events = context.eventSource; const types = context.eventTypes || window.event_types || {};
     [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); ensureMessagingState(); activeMessageId = ''; render(); }));
-    render(); console.info('[ST Book Review] 1.5.0 loaded');
+    render(); console.info('[ST Book Review] 1.6.0 loaded');
 }
 
 jQuery(init);
