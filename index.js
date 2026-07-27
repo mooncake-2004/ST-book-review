@@ -8,6 +8,7 @@ let root = null;
 let context = null;
 let activeTab = 'reviews';
 let activeMessageId = '';
+let activeContactId = 'screenwriter';
 
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -19,7 +20,19 @@ function getContext() {
 }
 
 function emptyState() {
-    return { settings: { ...DEFAULTS }, reviews: {}, rooms: { character: [], normal: [] } };
+    return { settings: { ...DEFAULTS }, reviews: {}, rooms: { character: [], normal: [] }, contacts: [{ id: 'screenwriter', name: '编剧', type: 'screenwriter' }], dmRooms: { screenwriter: [] } };
+}
+
+function ensureMessagingState() {
+    state.contacts = Array.isArray(state.contacts) && state.contacts.length ? state.contacts : [{ id: 'screenwriter', name: '编剧', type: 'screenwriter' }];
+    if (!state.contacts.some(c => c.id === 'screenwriter')) state.contacts.unshift({ id: 'screenwriter', name: '编剧', type: 'screenwriter' });
+    state.dmRooms ||= {};
+    state.dmRooms.screenwriter ||= state.rooms?.normal || [];
+    if (state.rooms?.character?.length && !state.contacts.some(c => c.id === 'legacy-character')) {
+        state.contacts.push({ id: 'legacy-character', name: context.name2 || '当前角色', type: 'character' });
+        state.dmRooms['legacy-character'] = state.rooms.character;
+    }
+    if (!state.contacts.some(c => c.id === activeContactId)) activeContactId = 'screenwriter';
 }
 
 function chatKey() {
@@ -130,10 +143,10 @@ function renderReviewTab() {
     }).join('');
     const comments = (review?.comments || []).map(comment => `
         <article class="stbr-comment" data-comment-id="${comment.id}">
-          <div class="stbr-comment-head"><strong>${escapeHtml(comment.author)}</strong><time>${new Date(comment.createdAt).toLocaleString()}</time></div>
+          <div class="stbr-comment-head"><strong>${escapeHtml(comment.author)}</strong><div>${comment.isMine || comment.author === reviewerName() ? `<span class="stbr-own-actions"><button data-action="edit-comment" data-id="${comment.id}">修改</button><button data-action="delete-comment" data-id="${comment.id}">删除</button></span>` : ''}<time>${new Date(comment.createdAt).toLocaleString()}</time></div></div>
           <p>${escapeHtml(comment.content)}</p>
           <button class="stbr-link-btn" data-action="reply" data-id="${comment.id}">回复</button>${comment.pending ? '<span class="stbr-pending">待更新</span>' : ''}
-          ${(comment.replies || []).map(reply => `<div class="stbr-reply"><strong>${escapeHtml(reply.author)}</strong>${reply.replyTo ? `<small>回复 @${escapeHtml(reply.replyTo)}</small>` : ''}<span>${escapeHtml(reply.content)}</span>${reply.pending ? '<em>待更新</em>' : ''}</div>`).join('')}
+          ${(comment.replies || []).map(reply => `<div class="stbr-reply"><div class="stbr-reply-line"><span><strong>${escapeHtml(reply.author)}</strong>${reply.replyTo ? `<small>回复 @${escapeHtml(reply.replyTo)}</small>` : ''}</span>${reply.isMine || reply.author === reviewerName() ? `<span class="stbr-own-actions"><button data-action="edit-reply" data-comment-id="${comment.id}" data-id="${reply.id}">修改</button><button data-action="delete-reply" data-comment-id="${comment.id}" data-id="${reply.id}">删除</button></span>` : ''}</div><span>${escapeHtml(reply.content)}</span>${reply.pending ? '<em>待更新</em>' : ''}</div>`).join('')}
         </article>`).join('');
     return `${review?.generated ? `<div class="stbr-update-dock"><span><i class="fa-solid fa-thumbtack"></i> ${review.comments.some(c => c.pending || c.replies?.some(r => r.pending)) ? '有书评或回复待处理' : '评论区已同步'}</span><button class="stbr-btn stbr-btn-primary" data-action="update-reviews"><i class="fa-solid fa-arrows-rotate"></i> 更新评论区</button></div>` : ''}<section class="stbr-section">
       <label class="stbr-label" for="stbr-floor-select"><i class="fa-solid fa-book-open"></i> 章节标题</label>
@@ -147,13 +160,16 @@ function renderReviewTab() {
     </section>`;
 }
 
-function renderRoom(mode) {
-    const isCharacter = mode === 'character';
-    const history = state.rooms[mode] || [];
-    return `<section class="stbr-section stbr-room-intro"><div class="stbr-mode-icon"><i class="fa-solid ${isCharacter ? 'fa-masks-theater' : 'fa-mug-hot'}"></i></div><div><b>${isCharacter ? '角色私聊' : '普通聊天'}</b><p>${isCharacter ? '角色知道自己身处小说，可与你谈感受、选择与命运。' : '以戏外视角讨论剧情、人物和你的任何疑问，不写入正文。'}</p></div></section>
-      <section class="stbr-section stbr-chat-section"><div class="stbr-chat-log" id="stbr-chat-log">${history.map(m => `<div class="stbr-bubble ${m.role}"><span>${escapeHtml(m.content)}</span></div>`).join('') || '<div class="stbr-empty">这是独立房间，不会污染小说正文。</div>'}</div>
-      <form class="stbr-composer" id="stbr-room-form" data-mode="${mode}"><textarea class="stbr-input stbr-room-input" name="content" rows="2" placeholder="${isCharacter ? '想对角色说什么？' : '想聊什么？'}"></textarea><button class="stbr-send" title="发送"><i class="fa-solid fa-paper-plane"></i></button></form>
-      <button class="stbr-link-btn stbr-clear" data-action="clear-room" data-mode="${mode}">清空此房间</button></section>`;
+function renderMessages() {
+    ensureMessagingState();
+    const contact = state.contacts.find(c => c.id === activeContactId) || state.contacts[0];
+    const history = state.dmRooms[contact.id] ||= [];
+    const contacts = state.contacts.map(c => `<button class="stbr-contact ${c.id === contact.id ? 'active' : ''}" data-action="select-contact" data-id="${c.id}"><span class="stbr-avatar">${escapeHtml(c.name.slice(0, 1))}</span><span>${escapeHtml(c.name)}</span>${c.type !== 'screenwriter' ? `<i data-action="remove-contact" data-id="${c.id}" title="删除联系人" class="fa-solid fa-xmark"></i>` : ''}</button>`).join('');
+    return `<div class="stbr-messenger"><aside class="stbr-contact-pane"><div class="stbr-contact-title">私信</div><div class="stbr-contact-list">${contacts}</div><form id="stbr-add-contact" class="stbr-add-contact"><input class="stbr-input" name="name" maxlength="30" placeholder="输入人物名"><button title="新增私信人物"><i class="fa-solid fa-plus"></i></button></form></aside>
+      <section class="stbr-conversation"><header><span class="stbr-avatar">${escapeHtml(contact.name.slice(0, 1))}</span><div><b>${escapeHtml(contact.name)}</b><small>${contact.type === 'screenwriter' ? '可以聊剧情，也可以聊任何日常话题' : '小说角色 · 戏外 1 对 1 私聊'}</small></div></header>
+      <div class="stbr-chat-log" id="stbr-chat-log">${history.map(m => `<div class="stbr-bubble ${m.role}"><span>${escapeHtml(m.content)}</span></div>`).join('') || `<div class="stbr-empty">你和${escapeHtml(contact.name)}的独立对话从这里开始。</div>`}</div>
+      <form class="stbr-composer stbr-dm-composer" id="stbr-room-form" data-contact-id="${contact.id}"><textarea class="stbr-input stbr-room-input" name="content" rows="2" placeholder="发消息给${escapeHtml(contact.name)}…"></textarea><button class="stbr-send" title="发送"><i class="fa-solid fa-paper-plane"></i></button></form>
+      <button class="stbr-link-btn stbr-clear" data-action="clear-room" data-contact-id="${contact.id}">清空与${escapeHtml(contact.name)}的对话</button></section></div>`;
 }
 
 function renderSettings() {
@@ -164,14 +180,14 @@ function renderSettings() {
         <label class="stbr-label" for="stbr-api-key">API Key</label><input id="stbr-api-key" class="stbr-input" type="password" value="${escapeHtml(api.apiKey || '')}" placeholder="sk-…" autocomplete="off">
         <div class="stbr-model-head"><label class="stbr-label" for="stbr-model-search">模型</label><button class="stbr-link-btn" data-action="fetch-models"><i class="fa-solid fa-cloud-arrow-down"></i> 拉取模型</button></div>
         <input id="stbr-model-search" class="stbr-input" type="search" placeholder="输入 3.6 可快速筛选模型" autocomplete="off">
-        <select id="stbr-api-model" class="stbr-select stbr-model-select" size="${Math.min(6, Math.max(2, models.length || 2))}">${models.map(model => `<option value="${escapeHtml(model)}" ${model === api.apiModel ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('') || `<option value="${escapeHtml(api.apiModel || '')}">${escapeHtml(api.apiModel || '请先拉取模型')}</option>`}</select>
+        <select id="stbr-api-model" class="stbr-select stbr-model-select">${models.map(model => `<option value="${escapeHtml(model)}" ${model === api.apiModel ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('') || `<option value="${escapeHtml(api.apiModel || '')}">${escapeHtml(api.apiModel || '请先拉取模型')}</option>`}</select>
         <p class="stbr-hint">地址填写到 <code>/v1</code> 即可，插件会自动请求 <code>/models</code> 和 <code>/chat/completions</code>。</p>
       </div>` : '<p class="stbr-hint">书评、书摘和独立聊天使用当前 SillyTavern 主连接。</p>';
     return `<section class="stbr-section"><label class="stbr-toggle-row"><span><b>显示悬浮气泡</b><small>关闭后仍可从魔法棒菜单打开</small></span><input id="stbr-bubble-toggle" type="checkbox" ${state.settings.bubbleEnabled ? 'checked' : ''}><i></i></label></section>
       <section class="stbr-section"><label class="stbr-label" for="stbr-reviewer-name"><i class="fa-solid fa-user-pen"></i> 书评网名</label><input id="stbr-reviewer-name" class="stbr-input" type="text" maxlength="30" value="${escapeHtml(state.settings.reviewerName || '')}" placeholder="默认使用 SillyTavern 用户名"><p class="stbr-hint">你发表书评和回复时显示的名字；留空则使用当前用户名。</p></section>
       <section class="stbr-section"><label class="stbr-label" for="stbr-api-mode"><i class="fa-solid fa-plug"></i> API 连接</label><select id="stbr-api-mode" class="stbr-select"><option value="main" ${api.apiMode === 'main' ? 'selected' : ''}>使用主酒馆 API</option><option value="custom" ${api.apiMode === 'custom' ? 'selected' : ''}>连接其他 OpenAI 兼容 API</option></select>${customApi}</section>
       <section class="stbr-section"><label class="stbr-label" for="stbr-context-depth">侧聊读取正文层数</label><input id="stbr-context-depth" class="stbr-input" type="number" min="2" max="50" value="${state.settings.contextDepth}"><p class="stbr-hint">角色私聊和普通聊天只读取最近这些楼层，独立聊天记录另行保存。</p></section>
-      <section class="stbr-section stbr-about"><b>ST Book Review · 1.3.0</b><p>书评区、角色私聊与普通聊天均绑定当前 SillyTavern 对话保存。</p></section>`;
+      <section class="stbr-section stbr-about"><b>ST Book Review · 1.4.0</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
 function render() {
@@ -180,14 +196,15 @@ function render() {
     if (fab) fab.hidden = !state.settings.bubbleEnabled;
     root.querySelectorAll('.stbr-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === activeTab));
     const body = root.querySelector('#stbr-body');
-    body.innerHTML = activeTab === 'reviews' ? renderReviewTab() : activeTab === 'character' ? renderRoom('character') : activeTab === 'normal' ? renderRoom('normal') : renderSettings();
+    body.innerHTML = activeTab === 'reviews' ? renderReviewTab() : activeTab === 'messages' ? renderMessages() : renderSettings();
     requestAnimationFrame(() => { const log = root.querySelector('#stbr-chat-log'); if (log) log.scrollTop = log.scrollHeight; });
 }
 
 function normalizeComments(items = []) {
-    return items.filter(c => c?.content).map(c => ({
-        id: uid(), author: c.author || '匿名读者', content: c.content,
-        createdAt: now(), replies: (c.replies || []).filter(r => r?.content).map(r => ({ id: uid(), author: r.author || '匿名读者', content: r.content, createdAt: now() })),
+    const fallbackNames = ['夜航星', '春日邮差', '纸上青苔', '南窗旧梦', '山雀来信', '迟墨', '半糖乌龙', '月下拾句', '北岸书生', '雾里灯', '小满未满', '长街听雨'];
+    return items.filter(c => c?.content).map((c, index) => ({
+        id: uid(), author: !String(c.author || '').trim() || String(c.author).trim() === '匿名读者' ? fallbackNames[index % fallbackNames.length] : String(c.author).trim(), content: c.content,
+        createdAt: now(), replies: (c.replies || []).filter(r => r?.content).map((r, replyIndex) => ({ id: uid(), author: !String(r.author || '').trim() || String(r.author).trim() === '匿名读者' ? fallbackNames[(index + replyIndex + 3) % fallbackNames.length] : String(r.author).trim(), content: r.content, createdAt: now() })),
     }));
 }
 
@@ -287,14 +304,15 @@ async function fetchModels() {
 }
 
 async function sendRoom(form) {
-    const mode = form.dataset.mode;
+    ensureMessagingState();
+    const contact = state.contacts.find(c => c.id === form.dataset.contactId) || state.contacts[0];
     const input = form.elements.content;
     const text = input.value.trim(); if (!text) return;
-    const history = state.rooms[mode];
+    const history = state.dmRooms[contact.id] ||= [];
     history.push({ id: uid(), role: 'user', content: text, createdAt: now() }); input.value = ''; render();
-    const system = mode === 'character'
-        ? `你是小说角色“${context.name2 || '当前角色'}”，但这是小说之外的私聊。你清楚自己是故事角色，了解刚才发生的剧情，可以诚实谈论心情、动机、遗憾与作者/读者，但不要续写小说正文。保持角色的性格与口吻。`
-        : '你是小说的戏外聊天伙伴。结合只读故事上下文与用户讨论剧情、人物和感受。除非用户明确要求草稿，否则不要续写或扮演正文。';
+    const system = contact.type === 'screenwriter'
+        ? '你叫“编剧”，是用户坦诚、自然的长期聊天伙伴。虽然名字叫编剧，但话题不受小说限制：既能结合只读故事上下文讨论剧情和人物，也能聊生活、情绪、知识或任何日常话题。除非用户明确要求，否则不要续写小说正文。'
+        : `你是小说角色“${contact.name}”，这是小说之外的私人聊天。你知道自己身处小说，也知道截至当前的故事内容；保持角色性格与口吻，可以诚实讨论自己的心情、动机、选择和命运，但不要自动续写正文。`;
     try {
         const answer = await callAI(system, history.slice(0, -1), text);
         history.push({ id: uid(), role: 'assistant', content: answer || '（没有收到回复）', createdAt: now() });
@@ -305,10 +323,17 @@ async function sendRoom(form) {
 async function onSubmit(event) {
     if (event.target.id === 'stbr-comment-form') {
         event.preventDefault(); const text = event.target.elements.content.value.trim(); if (!text) return;
-        reviewFor(selectedMessage()).comments.push({ id: uid(), author: reviewerName(), content: text, createdAt: now(), replies: [], pending: true });
+        reviewFor(selectedMessage()).comments.push({ id: uid(), author: reviewerName(), content: text, createdAt: now(), replies: [], pending: true, isMine: true });
         await saveState(); render();
     }
     if (event.target.id === 'stbr-room-form') { event.preventDefault(); await sendRoom(event.target); }
+    if (event.target.id === 'stbr-add-contact') {
+        event.preventDefault(); ensureMessagingState(); const name = event.target.elements.name.value.trim(); if (!name) return;
+        const existing = state.contacts.find(c => c.name === name);
+        if (existing) activeContactId = existing.id;
+        else { const id = `contact-${uid()}`; state.contacts.push({ id, name, type: 'character' }); state.dmRooms[id] = []; activeContactId = id; await saveState(); }
+        render();
+    }
 }
 
 async function onClick(event) {
@@ -320,11 +345,34 @@ async function onClick(event) {
     if (action === 'reset-reviews') await resetReviews();
     if (action === 'reset-excerpt') await resetExcerpt();
     if (action === 'fetch-models') await fetchModels();
-    if (action === 'clear-room' && confirm('清空这个独立聊天房间？')) { state.rooms[target.dataset.mode] = []; await saveState(); render(); }
+    if (action === 'select-contact') { activeContactId = target.dataset.id; render(); }
+    if (action === 'remove-contact') {
+        event.stopPropagation(); if (!confirm('删除这个私信联系人及全部聊天记录？')) return;
+        state.contacts = state.contacts.filter(c => c.id !== target.dataset.id); delete state.dmRooms[target.dataset.id]; activeContactId = 'screenwriter'; await saveState(); render();
+    }
+    if (action === 'clear-room' && confirm('清空这个独立聊天房间？')) { state.dmRooms[target.dataset.contactId] = []; await saveState(); render(); }
     if (action === 'reply') {
         const text = prompt('回复这条评论：'); if (!text?.trim()) return;
         const comment = reviewFor(selectedMessage()).comments.find(c => c.id === target.dataset.id);
-        comment?.replies.push({ id: uid(), author: reviewerName(), content: text.trim(), createdAt: now(), pending: true }); await saveState(); render();
+        comment?.replies.push({ id: uid(), author: reviewerName(), content: text.trim(), createdAt: now(), pending: true, isMine: true }); await saveState(); render();
+    }
+    if (action === 'edit-comment') {
+        const comment = reviewFor(selectedMessage()).comments.find(c => c.id === target.dataset.id); if (!comment) return;
+        const text = prompt('修改书评：', comment.content); if (!text?.trim()) return;
+        comment.content = text.trim(); comment.pending = true; comment.isMine = true; await saveState(); render();
+    }
+    if (action === 'delete-comment' && confirm('确定删除这条书评及其全部回复吗？')) {
+        const review = reviewFor(selectedMessage()); review.comments = review.comments.filter(c => c.id !== target.dataset.id); await saveState(); render();
+    }
+    if (action === 'edit-reply') {
+        const comment = reviewFor(selectedMessage()).comments.find(c => c.id === target.dataset.commentId);
+        const reply = comment?.replies.find(r => r.id === target.dataset.id); if (!reply) return;
+        const text = prompt('修改回复：', reply.content); if (!text?.trim()) return;
+        reply.content = text.trim(); reply.pending = true; reply.isMine = true; await saveState(); render();
+    }
+    if (action === 'delete-reply' && confirm('确定删除这条回复吗？')) {
+        const comment = reviewFor(selectedMessage()).comments.find(c => c.id === target.dataset.commentId);
+        if (comment) comment.replies = comment.replies.filter(r => r.id !== target.dataset.id); await saveState(); render();
     }
 }
 
@@ -346,7 +394,6 @@ function onInput(event) {
     const current = state.settings.apiModel;
     const filtered = (state.settings.apiModels || []).filter(model => model.toLowerCase().includes(query));
     select.innerHTML = filtered.map(model => `<option value="${escapeHtml(model)}" ${model === current ? 'selected' : ''}>${escapeHtml(model)}</option>`).join('') || '<option disabled>没有匹配模型</option>';
-    select.size = Math.min(6, Math.max(2, filtered.length || 2));
 }
 
 function addMagicWandEntry() {
@@ -359,7 +406,7 @@ function addMagicWandEntry() {
 
 async function init() {
     if (document.querySelector('#stbr-root')) return;
-    context = getContext(); state = loadState();
+    context = getContext(); state = loadState(); ensureMessagingState();
     const html = await renderExtensionTemplateAsync(EXT_FOLDER, 'template');
     root = document.createElement('div'); root.id = 'stbr-root'; root.innerHTML = html; document.body.append(root);
     root.querySelector('#stbr-fab').addEventListener('click', () => openPanel());
@@ -369,8 +416,8 @@ async function init() {
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !root.querySelector('#stbr-overlay').hidden) closePanel(); });
     addMagicWandEntry(); setTimeout(addMagicWandEntry, 1500);
     const events = context.eventSource; const types = context.eventTypes || window.event_types || {};
-    [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); activeMessageId = ''; render(); }));
-    render(); console.info('[ST Book Review] 1.3.0 loaded');
+    [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); ensureMessagingState(); activeMessageId = ''; render(); }));
+    render(); console.info('[ST Book Review] 1.4.0 loaded');
 }
 
 jQuery(init);
