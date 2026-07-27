@@ -1,12 +1,12 @@
 {
-  "display_name": "ST Book Review",
+  "display_name": "千页书评 · ST Book Review",
   "loading_order": 210,
   "requires": [],
   "optional": [],
   "js": "index.js",
   "css": "style.css",
   "author": "mooncake-2004",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "homePage": "https://github.com/mooncake-2004/ST-book-review",
   "auto_update": true
 }

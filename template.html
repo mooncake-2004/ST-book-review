@@ -1,16 +1,14 @@
-<div class="stbr-panel" id="stbr-panel">
-  <div class="stbr-header">
-    <div>
-      <div class="stbr-title"><i class="fa-solid fa-comments"></i> ST Book Review</div>
-      <div class="stbr-subtitle">伪联机小说书评</div>
-    </div>
-    <button type="button" id="stbr-close" class="stbr-icon-btn" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button>
-  </div>
-  <div class="stbr-card">
-    <div class="stbr-card-title">悬浮气泡测试</div>
-    <p>这是第一阶段，只验证插件安装、悬浮气泡和自适应面板是否正常。暂时不会调用 API，也不会修改聊天消息。</p>
-    <button type="button" id="stbr-test" class="stbr-primary-btn"><i class="fa-solid fa-circle-check"></i> 测试插件</button>
-    <div id="stbr-test-result" class="stbr-result"></div>
-  </div>
-  <div class="stbr-next">下一阶段：在每条 AI 回复下添加“书评”入口。</div>
+<button type="button" id="stbr-fab" aria-label="打开千页书评" aria-expanded="false"><i class="fa-solid fa-book-open"></i><span class="stbr-fab-label">书评</span></button>
+<div id="stbr-overlay" hidden>
+  <button type="button" id="stbr-backdrop" aria-label="关闭书评面板"></button>
+  <section id="stbr-dialog" role="dialog" aria-modal="true" aria-label="千页书评">
+    <header class="stbr-header"><div><span class="stbr-kicker">AFTER THE CHAPTER</span><h2>千页书评</h2><p>读者仍在故事之外醒着</p></div><button id="stbr-close" class="stbr-icon-btn" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button></header>
+    <nav class="stbr-tabs" aria-label="功能">
+      <button class="stbr-tab active" data-tab="reviews"><i class="fa-solid fa-comments"></i><span>书评</span></button>
+      <button class="stbr-tab" data-tab="character"><i class="fa-solid fa-masks-theater"></i><span>私聊</span></button>
+      <button class="stbr-tab" data-tab="normal"><i class="fa-solid fa-mug-hot"></i><span>聊天</span></button>
+      <button class="stbr-tab" data-tab="settings"><i class="fa-solid fa-sliders"></i><span>设置</span></button>
+    </nav>
+    <main id="stbr-body" class="stbr-body"></main>
+  </section>
 </div>
