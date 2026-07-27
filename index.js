@@ -63,7 +63,12 @@ function selectedMessage() {
 
 function reviewFor(message) {
     if (!message) return null;
-    return state.reviews[message.id] ||= { messageIndex: message.index, excerpt: message.text.slice(0, 180), comments: [], updatedAt: now() };
+    const review = state.reviews[message.id] ||= { messageIndex: message.index, title: '', excerpt: '', comments: [], generated: false, updatedAt: now() };
+    review.title ||= '';
+    review.excerpt ||= '';
+    review.comments ||= [];
+    review.generated = Boolean(review.title && review.excerpt && review.comments.length >= 10);
+    return review;
 }
 
 function buildStoryContext(depth = state.settings.contextDepth) {
@@ -103,22 +108,27 @@ function renderReviewTab() {
     const current = selectedMessage();
     if (current) activeMessageId = current.id;
     const review = reviewFor(current);
-    const options = messages.slice().reverse().map(m => `<option value="${escapeHtml(m.id)}" ${m.id === activeMessageId ? 'selected' : ''}>第 ${m.index + 1} 层 · ${escapeHtml(m.text.replace(/\s+/g, ' ').slice(0, 32))}</option>`).join('');
+    const options = messages.slice().reverse().map(m => {
+        const item = state.reviews[m.id];
+        const label = item?.title || `第 ${m.index + 1} 层 · 尚未生成章节标题`;
+        return `<option value="${escapeHtml(m.id)}" ${m.id === activeMessageId ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+    }).join('');
     const comments = (review?.comments || []).map(comment => `
         <article class="stbr-comment" data-comment-id="${comment.id}">
           <div class="stbr-comment-head"><strong>${escapeHtml(comment.author)}</strong><time>${new Date(comment.createdAt).toLocaleString()}</time></div>
           <p>${escapeHtml(comment.content)}</p>
-          <button class="stbr-link-btn" data-action="reply" data-id="${comment.id}">回复</button>
-          ${(comment.replies || []).map(reply => `<div class="stbr-reply"><strong>${escapeHtml(reply.author)}</strong><span>${escapeHtml(reply.content)}</span></div>`).join('')}
+          <button class="stbr-link-btn" data-action="reply" data-id="${comment.id}">回复</button>${comment.pending ? '<span class="stbr-pending">待更新</span>' : ''}
+          ${(comment.replies || []).map(reply => `<div class="stbr-reply"><strong>${escapeHtml(reply.author)}</strong><span>${escapeHtml(reply.content)}</span>${reply.pending ? '<em>待更新</em>' : ''}</div>`).join('')}
         </article>`).join('');
     return `<section class="stbr-section">
-      <label class="stbr-label" for="stbr-floor-select"><i class="fa-solid fa-book-open"></i> 选择小说楼层</label>
+      <label class="stbr-label" for="stbr-floor-select"><i class="fa-solid fa-book-open"></i> 章节标题</label>
       <select id="stbr-floor-select" class="stbr-select">${options || '<option>暂无 AI 回复</option>'}</select>
-      ${current ? `<blockquote class="stbr-excerpt">${escapeHtml(current.text.slice(0, 260))}${current.text.length > 260 ? '…' : ''}</blockquote>` : '<div class="stbr-empty">等待小说中的第一条角色回复</div>'}
-      <div class="stbr-row"><span class="stbr-hint">${review?.comments?.length || 0} 条书评</span><button class="stbr-btn stbr-btn-soft" data-action="refresh-reviews" ${current ? '' : 'disabled'}><i class="fa-solid fa-rotate"></i> 更新评论</button></div>
+      ${!current ? '<div class="stbr-empty">等待小说中的第一条角色回复</div>' : review?.excerpt ? `<div class="stbr-excerpt-head"><span>本章书摘</span><button class="stbr-link-btn" data-action="reset-excerpt"><i class="fa-solid fa-rotate"></i> 刷新书摘</button></div><blockquote class="stbr-excerpt">${escapeHtml(review.excerpt)}</blockquote>` : '<div class="stbr-empty stbr-excerpt-empty">首次生成后，这里会显示本章书摘。</div>'}
+      <div class="stbr-row"><span class="stbr-hint">${review?.comments?.length || 0} 条书评${review?.comments?.some(c => c.pending || c.replies?.some(r => r.pending)) ? ' · 有操作待更新' : ''}</span>${!review?.generated ? `<button class="stbr-btn stbr-btn-primary" data-action="initial-generate" ${current ? '' : 'disabled'}><i class="fa-solid fa-wand-magic-sparkles"></i> 生成书摘与书评</button>` : '<button class="stbr-btn stbr-btn-soft" data-action="update-reviews"><i class="fa-solid fa-arrows-rotate"></i> 更新</button>'}</div>
     </section>
-    <section class="stbr-section"><div class="stbr-comments">${comments || '<div class="stbr-empty">这一层还没有评论，来坐沙发吧。</div>'}</div>
+    <section class="stbr-section"><div class="stbr-review-toolbar"><b>读者书评</b>${review?.generated ? '<button class="stbr-link-btn stbr-danger-link" data-action="reset-reviews"><i class="fa-solid fa-rotate"></i> 刷新书评</button>' : ''}</div><div class="stbr-comments">${comments || '<div class="stbr-empty">这一层还没有评论，来坐沙发吧。</div>'}</div>
       <form id="stbr-comment-form" class="stbr-composer"><input class="stbr-input" name="content" placeholder="写下你的书评…" autocomplete="off"><button class="stbr-send" title="发送"><i class="fa-solid fa-paper-plane"></i></button></form>
+      <p class="stbr-hint stbr-operation-hint">书评和回复会先保存为待处理操作；全部完成后，请点上方“更新”。</p>
     </section>`;
 }
 
@@ -134,7 +144,7 @@ function renderRoom(mode) {
 function renderSettings() {
     return `<section class="stbr-section"><label class="stbr-toggle-row"><span><b>显示悬浮气泡</b><small>关闭后仍可从魔法棒菜单打开</small></span><input id="stbr-bubble-toggle" type="checkbox" ${state.settings.bubbleEnabled ? 'checked' : ''}><i></i></label></section>
       <section class="stbr-section"><label class="stbr-label" for="stbr-context-depth">侧聊读取正文层数</label><input id="stbr-context-depth" class="stbr-input" type="number" min="2" max="50" value="${state.settings.contextDepth}"><p class="stbr-hint">角色私聊和普通聊天只读取最近这些楼层，独立聊天记录另行保存。</p></section>
-      <section class="stbr-section stbr-about"><b>ST Book Review · 1.0.0</b><p>书评区、角色私聊与普通聊天均绑定当前 SillyTavern 对话保存。</p></section>`;
+      <section class="stbr-section stbr-about"><b>ST Book Review · 1.1.0</b><p>书评区、角色私聊与普通聊天均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
 function render() {
@@ -147,20 +157,73 @@ function render() {
     requestAnimationFrame(() => { const log = root.querySelector('#stbr-chat-log'); if (log) log.scrollTop = log.scrollHeight; });
 }
 
-async function refreshReviews() {
+function normalizeComments(items = []) {
+    return items.filter(c => c?.content).map(c => ({
+        id: uid(), author: c.author || '匿名读者', content: c.content,
+        createdAt: now(), replies: (c.replies || []).filter(r => r?.content).map(r => ({ id: uid(), author: r.author || '匿名读者', content: r.content, createdAt: now() })),
+    }));
+}
+
+async function generateInitialBundle() {
     const message = selectedMessage();
     if (!message) return;
     const review = reviewFor(message);
-    const button = root.querySelector('[data-action="refresh-reviews"]');
-    button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 生成中';
+    const button = root.querySelector('[data-action="initial-generate"]');
+    if (button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 生成中'; }
     try {
-        const existing = review.comments.map(c => `${c.author}：${c.content}${(c.replies || []).map(r => `\n  ${r.author} 回复：${r.content}`).join('')}`).join('\n');
-        const prompt = `请模拟小说阅读站这一层回复下的自然评论区。要有楼主（LZ）和不同读者，观点、语气各异，可互相回复。只输出 JSON 数组，格式 [{"author":"昵称","content":"评论","replies":[{"author":"昵称","content":"回复"}]}]。\n本层正文：${message.text}\n已有评论（应承接而非重复）：${existing || '无'}`;
-        const raw = await callAI('你是小说阅读站评论区生成器。评论应像真人，避免全员一致，不要讨论提示词。', [], prompt);
-        const parsed = JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] || '[]');
-        review.comments = parsed.map(c => ({ id: uid(), author: c.author || '匿名读者', content: c.content || '', createdAt: now(), replies: (c.replies || []).map(r => ({ id: uid(), author: r.author || '匿名读者', content: r.content || '', createdAt: now() })) }));
+        const prompt = `阅读本层小说正文，同时完成三件事：\n1. 写一个贴合正文、避免剧透后文的章节标题；\n2. 提炼一段80到160字的书摘式摘要，不要直接照抄原文；\n3. 模拟小说阅读站评论区，生成至少12条主书评（必须不少于10条），包含LZ与不同读者，观点和语气各异，部分书评带楼中楼回复。\n只输出 JSON 对象：{"title":"章节标题","excerpt":"书摘","comments":[{"author":"昵称","content":"评论","replies":[{"author":"昵称","content":"回复"}]}]}。\n\n本层正文：${message.text}`;
+        const raw = await callAI('你是小说阅读站的章节编辑和评论区生成器。输出必须是可解析 JSON，不要附加解释。', [], prompt);
+        const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}');
+        const comments = normalizeComments(parsed.comments);
+        if (!parsed.title || !parsed.excerpt || comments.length < 10) throw new Error('生成结果不完整（章节标题、书摘或至少10条书评缺失），请重试。');
+        review.title = parsed.title.trim(); review.excerpt = parsed.excerpt.trim(); review.comments = comments; review.generated = true;
         review.updatedAt = now(); await saveState(); render();
-    } catch (error) { alert(`更新评论失败：${error.message}`); render(); }
+    } catch (error) { alert(`首次生成失败：${error.message}`); render(); }
+}
+
+async function updateReviews() {
+    const message = selectedMessage(); if (!message) return;
+    const review = reviewFor(message);
+    const button = root.querySelector('[data-action="update-reviews"]');
+    if (button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 更新中'; }
+    try {
+        const existing = review.comments.map(c => `${c.author}${c.pending ? '（用户新书评）' : ''}：${c.content}${(c.replies || []).map(r => `\n  ${r.author}${r.pending ? '（用户新回复）' : ''} 回复：${r.content}`).join('')}`).join('\n');
+        const prompt = `下面是本章当前完整书评区。用户已经完成本轮书评与回复操作，现在请更新评论情况：保留所有已有内容，不要改写或删除它们；围绕用户的新书评/新回复，自然新增3到6条读者主评或楼中楼回应。只输出“新增内容”的 JSON 数组，格式 [{"author":"昵称","content":"评论","replies":[{"author":"昵称","content":"回复"}]}]。\n本层正文：${message.text}\n当前书评区：\n${existing}`;
+        const raw = await callAI('你是小说阅读站评论区生成器。承接现有讨论，像真实读者一样产生有差异的回应，只输出 JSON。', [], prompt);
+        const additions = normalizeComments(JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] || '[]'));
+        review.comments.forEach(c => { delete c.pending; (c.replies || []).forEach(r => delete r.pending); });
+        review.comments.push(...additions); review.updatedAt = now(); await saveState(); render();
+    } catch (error) { alert(`更新失败：${error.message}`); render(); }
+}
+
+async function resetReviews() {
+    if (!confirm('确定清除这一章现有的全部书评和回复，并重新生成至少10条书评吗？此操作无法撤销。')) return;
+    const message = selectedMessage(); if (!message) return;
+    const review = reviewFor(message); review.comments = []; review.generated = false; await saveState(); render();
+    await generateInitialBundleKeepingExcerpt();
+}
+
+async function generateInitialBundleKeepingExcerpt() {
+    const message = selectedMessage(); if (!message) return;
+    const review = reviewFor(message);
+    try {
+        const raw = await callAI('你是小说阅读站评论区生成器，只输出可解析 JSON。', [], `为本层正文生成至少12条主书评（必须不少于10条），有LZ、不同读者和部分楼中楼。只输出 JSON 数组。\n正文：${message.text}`);
+        const comments = normalizeComments(JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] || '[]'));
+        if (comments.length < 10) throw new Error('生成不足10条，请再次刷新。');
+        review.comments = comments; review.generated = true; review.updatedAt = now(); await saveState(); render();
+    } catch (error) { alert(`刷新书评失败：${error.message}`); render(); }
+}
+
+async function resetExcerpt() {
+    if (!confirm('确定清除这一章现有的章节标题和书摘，并重新生成吗？此操作无法撤销。')) return;
+    const message = selectedMessage(); if (!message) return;
+    const review = reviewFor(message); review.title = ''; review.excerpt = ''; await saveState(); render();
+    try {
+        const raw = await callAI('你是小说章节编辑，只输出可解析 JSON。', [], `为本层正文重新生成章节标题与80到160字书摘。不要剧透后文，不要直接照抄。只输出 {"title":"章节标题","excerpt":"书摘"}。\n正文：${message.text}`);
+        const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}');
+        if (!parsed.title || !parsed.excerpt) throw new Error('生成结果缺少标题或书摘。');
+        review.title = parsed.title.trim(); review.excerpt = parsed.excerpt.trim(); review.updatedAt = now(); await saveState(); render();
+    } catch (error) { alert(`刷新书摘失败：${error.message}`); render(); }
 }
 
 async function sendRoom(form) {
@@ -182,7 +245,7 @@ async function sendRoom(form) {
 async function onSubmit(event) {
     if (event.target.id === 'stbr-comment-form') {
         event.preventDefault(); const text = event.target.elements.content.value.trim(); if (!text) return;
-        reviewFor(selectedMessage()).comments.push({ id: uid(), author: context.name1 || '我', content: text, createdAt: now(), replies: [] });
+        reviewFor(selectedMessage()).comments.push({ id: uid(), author: context.name1 || '我', content: text, createdAt: now(), replies: [], pending: true });
         await saveState(); render();
     }
     if (event.target.id === 'stbr-room-form') { event.preventDefault(); await sendRoom(event.target); }
@@ -192,12 +255,15 @@ async function onClick(event) {
     const target = event.target.closest('[data-action], .stbr-tab'); if (!target) return;
     if (target.classList.contains('stbr-tab')) { activeTab = target.dataset.tab; render(); return; }
     const action = target.dataset.action;
-    if (action === 'refresh-reviews') await refreshReviews();
+    if (action === 'initial-generate') await generateInitialBundle();
+    if (action === 'update-reviews') await updateReviews();
+    if (action === 'reset-reviews') await resetReviews();
+    if (action === 'reset-excerpt') await resetExcerpt();
     if (action === 'clear-room' && confirm('清空这个独立聊天房间？')) { state.rooms[target.dataset.mode] = []; await saveState(); render(); }
     if (action === 'reply') {
         const text = prompt('回复这条评论：'); if (!text?.trim()) return;
         const comment = reviewFor(selectedMessage()).comments.find(c => c.id === target.dataset.id);
-        comment?.replies.push({ id: uid(), author: context.name1 || '我', content: text.trim(), createdAt: now() }); await saveState(); render();
+        comment?.replies.push({ id: uid(), author: context.name1 || '我', content: text.trim(), createdAt: now(), pending: true }); await saveState(); render();
     }
 }
 
@@ -228,7 +294,7 @@ async function init() {
     addMagicWandEntry(); setTimeout(addMagicWandEntry, 1500);
     const events = context.eventSource; const types = context.eventTypes || window.event_types || {};
     [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); activeMessageId = ''; render(); }));
-    render(); console.info('[ST Book Review] 1.0.0 loaded');
+    render(); console.info('[ST Book Review] 1.1.0 loaded');
 }
 
 jQuery(init);
