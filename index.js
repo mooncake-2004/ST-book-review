@@ -88,8 +88,22 @@ function aiMessages() {
         }));
 }
 
+function reviewMessageCatalog() {
+    const catalog = new Map(aiMessages().map(message => [message.id, message]));
+    Object.entries(state.reviews || {}).forEach(([id, review]) => {
+        if (!catalog.has(id)) catalog.set(id, {
+            id,
+            index: Number.isFinite(Number(review.messageIndex)) ? Number(review.messageIndex) : 0,
+            name: context.name2 || '角色',
+            text: String(review.sourceText || review.excerpt || ''),
+            savedOnly: true,
+        });
+    });
+    return [...catalog.values()].sort((a, b) => a.index - b.index);
+}
+
 function selectedMessage() {
-    const messages = aiMessages();
+    const messages = reviewMessageCatalog();
     return messages.find(x => x.id === activeMessageId) || messages.at(-1) || null;
 }
 
@@ -98,6 +112,7 @@ function reviewFor(message) {
     const review = state.reviews[message.id] ||= { messageIndex: message.index, title: '', excerpt: '', comments: [], generated: false, updatedAt: now() };
     review.title ||= '';
     review.excerpt ||= '';
+    if (message.text && !review.sourceText) review.sourceText = message.text;
     review.comments ||= [];
     review.generated = Boolean(review.title && review.excerpt && review.comments.length >= 10);
     return review;
@@ -151,7 +166,7 @@ function closePanel() {
 }
 
 function renderReviewTab() {
-    const messages = aiMessages();
+    const messages = reviewMessageCatalog();
     const current = selectedMessage();
     if (current) activeMessageId = current.id;
     const review = reviewFor(current);
@@ -220,7 +235,7 @@ function renderSettings() {
         <label class="stbr-label" for="stbr-compression-limit">达到多少条消息时压缩</label><input id="stbr-compression-limit" class="stbr-input" type="number" min="6" max="200" value="${Number(api.compressionLimit) || 30}"><p class="stbr-hint">例如填 30：首次累计 30 条消息后生成一份本地记忆；记忆占 1 条，此后再累计 29 条新消息时重新压缩。</p>
       </div></details>
       <section class="stbr-section"><label class="stbr-label" for="stbr-context-depth">侧聊读取正文层数</label><input id="stbr-context-depth" class="stbr-input" type="number" min="2" max="50" value="${state.settings.contextDepth}"><p class="stbr-hint">角色私聊和普通聊天只读取最近这些楼层，独立聊天记录另行保存。</p></section>
-      <section class="stbr-section stbr-about"><b>ST Book Review · 1.7.1</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
+      <section class="stbr-section stbr-about"><b>ST Book Review · 1.7.2</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
 function render() {
@@ -524,8 +539,7 @@ function addMagicWandEntry() {
 }
 
 function syncExtensionControls() {
-    const mappings = { 'stbr-ext-plugin-toggle': state?.settings.pluginEnabled, 'stbr-ext-bubble-toggle': state?.settings.bubbleEnabled, 'stbr-ext-interface-toggle': state?.settings.interfaceEnabled };
-    Object.entries(mappings).forEach(([id, checked]) => { const input = document.getElementById(id); if (input) input.checked = Boolean(checked); });
+    document.querySelectorAll('[data-stbr-setting]').forEach(input => { input.checked = Boolean(state?.settings[input.dataset.stbrSetting]); });
 }
 
 function syncFabPosition() {
@@ -547,23 +561,21 @@ function syncFabPosition() {
     fab.style.setProperty('bottom', 'auto', 'important');
 }
 
-function fallbackSettingsHtml() {
-    return `<div id="stbr-extension-settings" class="inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b><i class="fa-solid fa-book-open"></i> 千页书评</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content stbr-ext-settings-content"><p class="stbr-ext-description">小说楼层书评与独立私信空间。</p><label class="checkbox_label"><input id="stbr-ext-plugin-toggle" type="checkbox"><span><b>启用插件</b><small>关闭后隐藏气泡和界面入口。</small></span></label><label class="checkbox_label"><input id="stbr-ext-bubble-toggle" type="checkbox"><span><b>显示悬浮气泡</b><small>适配桌面和手机可视区域。</small></span></label><label class="checkbox_label"><input id="stbr-ext-interface-toggle" type="checkbox"><span><b>显示界面入口</b><small>控制魔法棒菜单入口。</small></span></label><button id="stbr-ext-open" class="menu_button menu_button_icon"><i class="fa-solid fa-up-right-from-square"></i><span>打开千页书评</span></button></div></div>`;
+function extensionSettingsHtml() {
+    return `<div class="stbr-extension-settings inline-drawer"><div class="inline-drawer-toggle inline-drawer-header"><b><i class="fa-solid fa-book-open"></i> 千页书评</b><div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div></div><div class="inline-drawer-content stbr-ext-settings-content"><p class="stbr-ext-description">小说楼层书评与独立私信空间。</p><label class="checkbox_label"><input data-stbr-setting="pluginEnabled" type="checkbox"><span><b>启用插件</b><small>关闭后隐藏气泡和界面入口。</small></span></label><label class="checkbox_label"><input data-stbr-setting="bubbleEnabled" type="checkbox"><span><b>显示悬浮气泡</b><small>适配桌面和手机可视区域。</small></span></label><label class="checkbox_label"><input data-stbr-setting="interfaceEnabled" type="checkbox"><span><b>显示界面入口</b><small>控制魔法棒菜单入口。</small></span></label><button class="stbr-ext-open menu_button menu_button_icon"><i class="fa-solid fa-up-right-from-square"></i><span>打开千页书评</span></button></div></div>`;
 }
 
 async function mountExtensionSettings() {
-    if (document.querySelector('#stbr-extension-settings')) return;
-    const container = document.querySelector('#extensions_settings2, #extensions_settings, .extensions_settings, [id*="extensions_settings"]');
-    if (!container) { setTimeout(mountExtensionSettings, 1200); return; }
-    let html;
-    try { html = await renderExtensionTemplateAsync(EXT_FOLDER, 'settings'); }
-    catch (error) { console.warn('[ST Book Review] settings template fallback:', error); html = fallbackSettingsHtml(); }
-    const wrapper = document.createElement('div'); wrapper.innerHTML = html; container.append(...wrapper.children);
-    const bind = (id, key) => document.getElementById(id)?.addEventListener('change', async event => { state.settings[key] = event.target.checked; await saveState(); render(); });
-    bind('stbr-ext-plugin-toggle', 'pluginEnabled');
-    bind('stbr-ext-bubble-toggle', 'bubbleEnabled');
-    bind('stbr-ext-interface-toggle', 'interfaceEnabled');
-    document.querySelector('#stbr-ext-open')?.addEventListener('click', () => openPanel('reviews'));
+    let containers = [...document.querySelectorAll('#extensions_settings, #extensions_settings2')];
+    if (!containers.length) containers = [...document.querySelectorAll('.extensions_settings, [id*="extensions_settings"]')];
+    if (!containers.length) { setTimeout(mountExtensionSettings, 1200); return; }
+    containers.forEach(container => {
+        if (container.querySelector(':scope > .stbr-extension-settings')) return;
+        const wrapper = document.createElement('div'); wrapper.innerHTML = extensionSettingsHtml();
+        const panel = wrapper.firstElementChild; container.append(panel);
+        panel.querySelectorAll('[data-stbr-setting]').forEach(input => input.addEventListener('change', async event => { state.settings[event.target.dataset.stbrSetting] = event.target.checked; await saveState(); render(); }));
+        panel.querySelector('.stbr-ext-open')?.addEventListener('click', () => openPanel('reviews'));
+    });
     syncExtensionControls();
 }
 
@@ -587,7 +599,7 @@ async function init() {
     mountExtensionSettings().catch(error => console.warn('[ST Book Review] settings mount failed:', error));
     const events = context.eventSource; const types = context.eventTypes || window.event_types || {};
     [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); ensureMessagingState(); activeMessageId = ''; render(); }));
-    console.info('[ST Book Review] 1.7.1 loaded');
+    console.info('[ST Book Review] 1.7.2 loaded');
 }
 
 jQuery(init);
