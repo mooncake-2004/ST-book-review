@@ -1,0 +1,12 @@
+{
+  "display_name": "ST Book Review",
+  "loading_order": 210,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "mooncake-2004",
+  "version": "0.1.0",
+  "homePage": "https://github.com/mooncake-2004/ST-book-review",
+  "auto_update": true
+}

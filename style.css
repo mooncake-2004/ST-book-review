@@ -1,0 +1,13 @@
+#stbr_drawer { width: min(420px, 94vw); max-height: 82vh; overflow: auto; }
+#stbr_drawer_icon { cursor: pointer; }
+.stbr-panel { padding: 12px; color: var(--SmartThemeBodyColor, #eee); font-family: var(--mainFontFamily, sans-serif); }
+.stbr-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.stbr-title { font-size: 17px; font-weight: 700; }
+.stbr-subtitle { margin-top: 2px; font-size: 11px; opacity: .65; }
+.stbr-icon-btn { width: 32px; height: 32px; border: 1px solid var(--SmartThemeBorderColor, #777); border-radius: 8px; background: var(--black30a, rgba(0,0,0,.25)); color: inherit; cursor: pointer; }
+.stbr-card { padding: 13px; border: 1px solid var(--SmartThemeBorderColor, #777); border-radius: 10px; background: var(--black30a, rgba(0,0,0,.25)); }
+.stbr-card-title { font-weight: 700; margin-bottom: 7px; }
+.stbr-card p { margin: 0 0 12px; font-size: 12px; line-height: 1.65; opacity: .82; }
+.stbr-primary-btn { border: 0; border-radius: 8px; padding: 8px 12px; background: var(--SmartThemeQuoteColor, #7c6ee6); color: white; cursor: pointer; }
+.stbr-result { min-height: 20px; margin-top: 10px; color: #62d59a; font-size: 12px; }
+.stbr-next { margin-top: 10px; padding: 9px 11px; border-radius: 8px; font-size: 11px; background: var(--black30a, rgba(0,0,0,.18)); opacity: .75; }
