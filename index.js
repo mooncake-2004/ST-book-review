@@ -219,7 +219,7 @@ function renderSettings() {
         <label class="stbr-label" for="stbr-compression-limit">达到多少条消息时压缩</label><input id="stbr-compression-limit" class="stbr-input" type="number" min="6" max="200" value="${Number(api.compressionLimit) || 30}"><p class="stbr-hint">例如填 30：首次累计 30 条消息后生成一份本地记忆；记忆占 1 条，此后再累计 29 条新消息时重新压缩。</p>
       </div></details>
       <section class="stbr-section"><label class="stbr-label" for="stbr-context-depth">侧聊读取正文层数</label><input id="stbr-context-depth" class="stbr-input" type="number" min="2" max="50" value="${state.settings.contextDepth}"><p class="stbr-hint">角色私聊和普通聊天只读取最近这些楼层，独立聊天记录另行保存。</p></section>
-      <section class="stbr-section stbr-about"><b>ST Book Review · 1.6.0</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
+      <section class="stbr-section stbr-about"><b>ST Book Review · 1.6.1</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
 function render() {
@@ -228,6 +228,7 @@ function render() {
     if (fab) fab.hidden = !state.settings.bubbleEnabled;
     root.querySelectorAll('.stbr-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === activeTab));
     const body = root.querySelector('#stbr-body');
+    body.classList.toggle('stbr-messages-body', activeTab === 'messages');
     body.innerHTML = activeTab === 'reviews' ? renderReviewTab() : activeTab === 'messages' ? renderMessages() : renderSettings();
     requestAnimationFrame(() => { const log = root.querySelector('#stbr-chat-log'); if (log) log.scrollTop = log.scrollHeight; });
 }
@@ -529,7 +530,7 @@ async function init() {
     addMagicWandEntry(); setTimeout(addMagicWandEntry, 1500);
     const events = context.eventSource; const types = context.eventTypes || window.event_types || {};
     [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); ensureMessagingState(); activeMessageId = ''; render(); }));
-    render(); console.info('[ST Book Review] 1.6.0 loaded');
+    render(); console.info('[ST Book Review] 1.6.1 loaded');
 }
 
 jQuery(init);
