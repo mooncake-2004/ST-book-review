@@ -2,7 +2,7 @@ import { renderExtensionTemplateAsync } from '/scripts/extensions.js';
 
 const EXT_FOLDER = 'third-party/ST-book-review';
 const STORE_KEY = 'st_book_review_v1';
-const DEFAULTS = { bubbleEnabled: true, contextDepth: 12 };
+const DEFAULTS = { bubbleEnabled: true, contextDepth: 12, reviewerName: '' };
 let state = null;
 let root = null;
 let context = null;
@@ -12,6 +12,7 @@ let activeMessageId = '';
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 const now = () => new Date().toISOString();
+const reviewerName = () => state.settings.reviewerName?.trim() || context.name1 || '我';
 
 function getContext() {
     return window.SillyTavern?.getContext?.() || window.getContext?.() || {};
@@ -110,7 +111,7 @@ function renderReviewTab() {
     const review = reviewFor(current);
     const options = messages.slice().reverse().map(m => {
         const item = state.reviews[m.id];
-        const label = item?.title || `第 ${m.index + 1} 层 · 尚未生成章节标题`;
+        const label = `第 ${m.index + 1} 层 · ${item?.title || '尚未生成章节标题'}`;
         return `<option value="${escapeHtml(m.id)}" ${m.id === activeMessageId ? 'selected' : ''}>${escapeHtml(label)}</option>`;
     }).join('');
     const comments = (review?.comments || []).map(comment => `
@@ -120,11 +121,11 @@ function renderReviewTab() {
           <button class="stbr-link-btn" data-action="reply" data-id="${comment.id}">回复</button>${comment.pending ? '<span class="stbr-pending">待更新</span>' : ''}
           ${(comment.replies || []).map(reply => `<div class="stbr-reply"><strong>${escapeHtml(reply.author)}</strong><span>${escapeHtml(reply.content)}</span>${reply.pending ? '<em>待更新</em>' : ''}</div>`).join('')}
         </article>`).join('');
-    return `<section class="stbr-section">
+    return `${review?.generated ? `<div class="stbr-update-dock"><span><i class="fa-solid fa-thumbtack"></i> ${review.comments.some(c => c.pending || c.replies?.some(r => r.pending)) ? '有书评或回复待处理' : '评论区已同步'}</span><button class="stbr-btn stbr-btn-primary" data-action="update-reviews"><i class="fa-solid fa-arrows-rotate"></i> 更新评论区</button></div>` : ''}<section class="stbr-section">
       <label class="stbr-label" for="stbr-floor-select"><i class="fa-solid fa-book-open"></i> 章节标题</label>
       <select id="stbr-floor-select" class="stbr-select">${options || '<option>暂无 AI 回复</option>'}</select>
       ${!current ? '<div class="stbr-empty">等待小说中的第一条角色回复</div>' : review?.excerpt ? `<div class="stbr-excerpt-head"><span>本章书摘</span><button class="stbr-link-btn" data-action="reset-excerpt"><i class="fa-solid fa-rotate"></i> 刷新书摘</button></div><blockquote class="stbr-excerpt">${escapeHtml(review.excerpt)}</blockquote>` : '<div class="stbr-empty stbr-excerpt-empty">首次生成后，这里会显示本章书摘。</div>'}
-      <div class="stbr-row"><span class="stbr-hint">${review?.comments?.length || 0} 条书评${review?.comments?.some(c => c.pending || c.replies?.some(r => r.pending)) ? ' · 有操作待更新' : ''}</span>${!review?.generated ? `<button class="stbr-btn stbr-btn-primary" data-action="initial-generate" ${current ? '' : 'disabled'}><i class="fa-solid fa-wand-magic-sparkles"></i> 生成书摘与书评</button>` : '<button class="stbr-btn stbr-btn-soft" data-action="update-reviews"><i class="fa-solid fa-arrows-rotate"></i> 更新</button>'}</div>
+      <div class="stbr-row"><span class="stbr-hint">${review?.comments?.length || 0} 条书评${review?.comments?.some(c => c.pending || c.replies?.some(r => r.pending)) ? ' · 有操作待更新' : ''}</span>${!review?.generated ? `<button class="stbr-btn stbr-btn-primary" data-action="initial-generate" ${current ? '' : 'disabled'}><i class="fa-solid fa-wand-magic-sparkles"></i> 生成书摘与书评</button>` : ''}</div>
     </section>
     <section class="stbr-section"><div class="stbr-review-toolbar"><b>读者书评</b>${review?.generated ? '<button class="stbr-link-btn stbr-danger-link" data-action="reset-reviews"><i class="fa-solid fa-rotate"></i> 刷新书评</button>' : ''}</div><div class="stbr-comments">${comments || '<div class="stbr-empty">这一层还没有评论，来坐沙发吧。</div>'}</div>
       <form id="stbr-comment-form" class="stbr-composer"><input class="stbr-input" name="content" placeholder="写下你的书评…" autocomplete="off"><button class="stbr-send" title="发送"><i class="fa-solid fa-paper-plane"></i></button></form>
@@ -143,8 +144,9 @@ function renderRoom(mode) {
 
 function renderSettings() {
     return `<section class="stbr-section"><label class="stbr-toggle-row"><span><b>显示悬浮气泡</b><small>关闭后仍可从魔法棒菜单打开</small></span><input id="stbr-bubble-toggle" type="checkbox" ${state.settings.bubbleEnabled ? 'checked' : ''}><i></i></label></section>
+      <section class="stbr-section"><label class="stbr-label" for="stbr-reviewer-name"><i class="fa-solid fa-user-pen"></i> 书评网名</label><input id="stbr-reviewer-name" class="stbr-input" type="text" maxlength="30" value="${escapeHtml(state.settings.reviewerName || '')}" placeholder="默认使用 SillyTavern 用户名"><p class="stbr-hint">你发表书评和回复时显示的名字；留空则使用当前用户名。</p></section>
       <section class="stbr-section"><label class="stbr-label" for="stbr-context-depth">侧聊读取正文层数</label><input id="stbr-context-depth" class="stbr-input" type="number" min="2" max="50" value="${state.settings.contextDepth}"><p class="stbr-hint">角色私聊和普通聊天只读取最近这些楼层，独立聊天记录另行保存。</p></section>
-      <section class="stbr-section stbr-about"><b>ST Book Review · 1.1.0</b><p>书评区、角色私聊与普通聊天均绑定当前 SillyTavern 对话保存。</p></section>`;
+      <section class="stbr-section stbr-about"><b>ST Book Review · 1.2.0</b><p>书评区、角色私聊与普通聊天均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
 function render() {
@@ -187,10 +189,20 @@ async function updateReviews() {
     const button = root.querySelector('[data-action="update-reviews"]');
     if (button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 更新中'; }
     try {
-        const existing = review.comments.map(c => `${c.author}${c.pending ? '（用户新书评）' : ''}：${c.content}${(c.replies || []).map(r => `\n  ${r.author}${r.pending ? '（用户新回复）' : ''} 回复：${r.content}`).join('')}`).join('\n');
-        const prompt = `下面是本章当前完整书评区。用户已经完成本轮书评与回复操作，现在请更新评论情况：保留所有已有内容，不要改写或删除它们；围绕用户的新书评/新回复，自然新增3到6条读者主评或楼中楼回应。只输出“新增内容”的 JSON 数组，格式 [{"author":"昵称","content":"评论","replies":[{"author":"昵称","content":"回复"}]}]。\n本层正文：${message.text}\n当前书评区：\n${existing}`;
+        const pendingTargets = review.comments.filter(c => c.pending || c.replies?.some(r => r.pending));
+        const existing = review.comments.map(c => `[主评ID:${c.id}] ${c.author}${c.pending ? '（用户本轮新书评，必须回复）' : ''}：${c.content}${(c.replies || []).map(r => `\n  [回复ID:${r.id}] ${r.author}${r.pending ? '（用户本轮新回复，必须继续回应）' : ''}：${r.content}`).join('')}`).join('\n');
+        const prompt = `下面是本章完整书评区。请更新评论情况。\n硬性要求：\n1. 保留所有已有内容，不要改写或删除；\n2. 每一条标注“必须回复/必须继续回应”的用户内容，都至少生成1条读者回应；\n3. 回应必须挂到对应主评下面，targetId 必须照抄该主评ID；即使回应的是其楼中楼，也使用所属主评ID；\n4. 另外可新增2到4条主书评；\n5. 只输出 JSON 对象：{"replies":[{"targetId":"主评ID","author":"昵称","content":"针对性回应"}],"comments":[{"author":"昵称","content":"新增主评","replies":[]}]}。\n本层正文：${message.text}\n当前书评区：\n${existing}`;
         const raw = await callAI('你是小说阅读站评论区生成器。承接现有讨论，像真实读者一样产生有差异的回应，只输出 JSON。', [], prompt);
-        const additions = normalizeComments(JSON.parse(raw.match(/\[[\s\S]*\]/)?.[0] || '[]'));
+        const parsed = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] || '{}');
+        const directReplies = Array.isArray(parsed.replies) ? parsed.replies.filter(r => r?.targetId && r?.content) : [];
+        const repliedTargets = new Set(directReplies.map(r => String(r.targetId)));
+        const missingTargets = pendingTargets.filter(c => !repliedTargets.has(c.id));
+        if (missingTargets.length) throw new Error(`模型漏掉了 ${missingTargets.length} 条待处理书评/回复，内容仍已保留，请再次点击更新。`);
+        directReplies.forEach(reply => {
+            const target = review.comments.find(c => c.id === String(reply.targetId));
+            if (target) target.replies.push({ id: uid(), author: reply.author || '匿名读者', content: reply.content, createdAt: now() });
+        });
+        const additions = normalizeComments(parsed.comments);
         review.comments.forEach(c => { delete c.pending; (c.replies || []).forEach(r => delete r.pending); });
         review.comments.push(...additions); review.updatedAt = now(); await saveState(); render();
     } catch (error) { alert(`更新失败：${error.message}`); render(); }
@@ -245,7 +257,7 @@ async function sendRoom(form) {
 async function onSubmit(event) {
     if (event.target.id === 'stbr-comment-form') {
         event.preventDefault(); const text = event.target.elements.content.value.trim(); if (!text) return;
-        reviewFor(selectedMessage()).comments.push({ id: uid(), author: context.name1 || '我', content: text, createdAt: now(), replies: [], pending: true });
+        reviewFor(selectedMessage()).comments.push({ id: uid(), author: reviewerName(), content: text, createdAt: now(), replies: [], pending: true });
         await saveState(); render();
     }
     if (event.target.id === 'stbr-room-form') { event.preventDefault(); await sendRoom(event.target); }
@@ -263,7 +275,7 @@ async function onClick(event) {
     if (action === 'reply') {
         const text = prompt('回复这条评论：'); if (!text?.trim()) return;
         const comment = reviewFor(selectedMessage()).comments.find(c => c.id === target.dataset.id);
-        comment?.replies.push({ id: uid(), author: context.name1 || '我', content: text.trim(), createdAt: now(), pending: true }); await saveState(); render();
+        comment?.replies.push({ id: uid(), author: reviewerName(), content: text.trim(), createdAt: now(), pending: true }); await saveState(); render();
     }
 }
 
@@ -271,6 +283,7 @@ async function onChange(event) {
     if (event.target.id === 'stbr-floor-select') { activeMessageId = event.target.value; render(); }
     if (event.target.id === 'stbr-bubble-toggle') { state.settings.bubbleEnabled = event.target.checked; await saveState(); render(); }
     if (event.target.id === 'stbr-context-depth') { state.settings.contextDepth = Math.max(2, Math.min(50, Number(event.target.value) || 12)); await saveState(); }
+    if (event.target.id === 'stbr-reviewer-name') { state.settings.reviewerName = event.target.value.trim(); await saveState(); }
 }
 
 function addMagicWandEntry() {
@@ -294,7 +307,7 @@ async function init() {
     addMagicWandEntry(); setTimeout(addMagicWandEntry, 1500);
     const events = context.eventSource; const types = context.eventTypes || window.event_types || {};
     [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); activeMessageId = ''; render(); }));
-    render(); console.info('[ST Book Review] 1.1.0 loaded');
+    render(); console.info('[ST Book Review] 1.2.0 loaded');
 }
 
 jQuery(init);
