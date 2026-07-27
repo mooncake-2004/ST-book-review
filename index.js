@@ -4,7 +4,7 @@ const EXT_FOLDER = 'third-party/ST-book-review';
 const STORE_KEY = 'st_book_review_v1';
 const DEFAULT_IN_PROMPT = `你就是小说世界里的“{name}”，正在故事内用即时消息和用户聊天。你必须以角色本人身份回应，不知道自己在被扮演。像微信聊天一样自然、口语化、简短，通常1到3句，尽量不超过80字；不要写旁白、动作描写、标题或长段分析。`;
 const DEFAULT_OUT_PROMPT = `你是现实/作品外负责扮演“{name}”的演员或扮演者，不是“{name}”本人。绝对不要用角色本人的身份、记忆或口吻冒充角色；你清楚角色只是你出演的对象，可以从演员视角聊表演、剧本、角色感受、剧情和日常。像微信聊天一样自然、口语化、简短，通常1到3句，尽量不超过80字。`;
-const DEFAULTS = { bubbleEnabled: true, contextDepth: 12, reviewerName: '', apiMode: 'main', apiBaseUrl: '', apiKey: '', apiModel: '', apiModels: [], inChatPrompt: DEFAULT_IN_PROMPT, outChatPrompt: DEFAULT_OUT_PROMPT, compressionEnabled: true, compressionLimit: 30 };
+const DEFAULTS = { pluginEnabled: true, bubbleEnabled: true, interfaceEnabled: true, contextDepth: 12, reviewerName: '', apiMode: 'main', apiBaseUrl: '', apiKey: '', apiModel: '', apiModels: [], inChatPrompt: DEFAULT_IN_PROMPT, outChatPrompt: DEFAULT_OUT_PROMPT, compressionEnabled: true, compressionLimit: 30 };
 let state = null;
 let root = null;
 let context = null;
@@ -138,6 +138,7 @@ async function callAI(system, history, userText, maxMessageIndex = null) {
 }
 
 function openPanel(tab = activeTab) {
+    if (!state.settings.pluginEnabled) return;
     activeTab = tab;
     root.querySelector('#stbr-overlay').hidden = false;
     root.querySelector('#stbr-fab')?.setAttribute('aria-expanded', 'true');
@@ -219,13 +220,17 @@ function renderSettings() {
         <label class="stbr-label" for="stbr-compression-limit">达到多少条消息时压缩</label><input id="stbr-compression-limit" class="stbr-input" type="number" min="6" max="200" value="${Number(api.compressionLimit) || 30}"><p class="stbr-hint">例如填 30：首次累计 30 条消息后生成一份本地记忆；记忆占 1 条，此后再累计 29 条新消息时重新压缩。</p>
       </div></details>
       <section class="stbr-section"><label class="stbr-label" for="stbr-context-depth">侧聊读取正文层数</label><input id="stbr-context-depth" class="stbr-input" type="number" min="2" max="50" value="${state.settings.contextDepth}"><p class="stbr-hint">角色私聊和普通聊天只读取最近这些楼层，独立聊天记录另行保存。</p></section>
-      <section class="stbr-section stbr-about"><b>ST Book Review · 1.6.1</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
+      <section class="stbr-section stbr-about"><b>ST Book Review · 1.7.0</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
 function render() {
     if (!root) return;
     const fab = root.querySelector('#stbr-fab');
-    if (fab) fab.hidden = !state.settings.bubbleEnabled;
+    if (fab) fab.hidden = !state.settings.pluginEnabled || !state.settings.bubbleEnabled;
+    const menuEntry = document.querySelector('#stbr-menu-entry');
+    if (menuEntry) menuEntry.hidden = !state.settings.pluginEnabled || !state.settings.interfaceEnabled;
+    if (!state.settings.pluginEnabled) closePanel();
+    syncExtensionControls();
     root.querySelectorAll('.stbr-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === activeTab));
     const body = root.querySelector('#stbr-body');
     body.classList.toggle('stbr-messages-body', activeTab === 'messages');
@@ -515,6 +520,26 @@ function addMagicWandEntry() {
     const entry = document.createElement('div'); entry.id = 'stbr-menu-entry'; entry.className = 'list-group-item flex-container flexGap5 interactable';
     entry.tabIndex = 0; entry.innerHTML = '<i class="fa-solid fa-book-open"></i><span>千页书评</span>';
     entry.addEventListener('click', () => openPanel('reviews')); menu.append(entry);
+    entry.hidden = !state.settings.pluginEnabled || !state.settings.interfaceEnabled;
+}
+
+function syncExtensionControls() {
+    const mappings = { 'stbr-ext-plugin-toggle': state?.settings.pluginEnabled, 'stbr-ext-bubble-toggle': state?.settings.bubbleEnabled, 'stbr-ext-interface-toggle': state?.settings.interfaceEnabled };
+    Object.entries(mappings).forEach(([id, checked]) => { const input = document.getElementById(id); if (input) input.checked = Boolean(checked); });
+}
+
+async function mountExtensionSettings() {
+    if (document.querySelector('#stbr-extension-settings')) return;
+    const container = document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings');
+    if (!container) { setTimeout(mountExtensionSettings, 1200); return; }
+    const html = await renderExtensionTemplateAsync(EXT_FOLDER, 'settings');
+    const wrapper = document.createElement('div'); wrapper.innerHTML = html; container.append(...wrapper.children);
+    const bind = (id, key) => document.getElementById(id)?.addEventListener('change', async event => { state.settings[key] = event.target.checked; await saveState(); render(); });
+    bind('stbr-ext-plugin-toggle', 'pluginEnabled');
+    bind('stbr-ext-bubble-toggle', 'bubbleEnabled');
+    bind('stbr-ext-interface-toggle', 'interfaceEnabled');
+    document.querySelector('#stbr-ext-open')?.addEventListener('click', () => openPanel('reviews'));
+    syncExtensionControls();
 }
 
 async function init() {
@@ -528,9 +553,10 @@ async function init() {
     root.addEventListener('click', onClick); root.addEventListener('submit', onSubmit); root.addEventListener('change', onChange); root.addEventListener('input', onInput);
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && !root.querySelector('#stbr-overlay').hidden) closePanel(); });
     addMagicWandEntry(); setTimeout(addMagicWandEntry, 1500);
+    await mountExtensionSettings();
     const events = context.eventSource; const types = context.eventTypes || window.event_types || {};
     [types.MESSAGE_RECEIVED, types.MESSAGE_DELETED, types.MESSAGE_EDITED, types.CHAT_CHANGED].filter(Boolean).forEach(type => events?.on?.(type, () => { context = getContext(); state = loadState(); ensureMessagingState(); activeMessageId = ''; render(); }));
-    render(); console.info('[ST Book Review] 1.6.1 loaded');
+    render(); console.info('[ST Book Review] 1.7.0 loaded');
 }
 
 jQuery(init);
