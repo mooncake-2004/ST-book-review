@@ -400,9 +400,19 @@ function render() {
 // === 4. REVIEW AND PRIVATE-MESSAGE BUSINESS LOGIC ===
 function normalizeComments(items = []) {
     const fallbackNames = ['夜航星', '春日邮差', '纸上青苔', '南窗旧梦', '山雀来信', '迟墨', '半糖乌龙', '月下拾句', '北岸书生', '雾里灯', '小满未满', '长街听雨'];
+    const reservedNames = new Set([context?.name1, state?.settings?.reviewerName].map(name => String(name || '').trim()).filter(Boolean));
+    const generatedAuthor = (value, index) => {
+        const candidate = String(value || '').trim();
+        if (candidate && candidate !== '匿名读者' && !reservedNames.has(candidate)) return candidate;
+        for (let offset = 0; offset < fallbackNames.length; offset++) {
+            const fallback = fallbackNames[(index + offset) % fallbackNames.length];
+            if (!reservedNames.has(fallback)) return fallback;
+        }
+        return '读者' + (index + 1);
+    };
     return items.filter(c => c?.content).map((c, index) => ({
-        id: uid(), author: !String(c.author || '').trim() || String(c.author).trim() === '匿名读者' ? fallbackNames[index % fallbackNames.length] : String(c.author).trim(), content: c.content,
-        createdAt: now(), replies: (c.replies || []).filter(r => r?.content).map((r, replyIndex) => ({ id: uid(), author: !String(r.author || '').trim() || String(r.author).trim() === '匿名读者' ? fallbackNames[(index + replyIndex + 3) % fallbackNames.length] : String(r.author).trim(), content: r.content, createdAt: now() })),
+        id: uid(), author: generatedAuthor(c.author, index), content: c.content,
+        createdAt: now(), replies: (c.replies || []).filter(r => r?.content).map((r, replyIndex) => ({ id: uid(), author: generatedAuthor(r.author, index + replyIndex + 3), content: r.content, createdAt: now() })),
     }));
 }
 
@@ -564,6 +574,23 @@ async function sendRoom(form) {
     await saveState(); render();
 }
 
+async function resendPrivateMessage(contactId, messageId) {
+    ensureMessagingState();
+    const contact = state.contacts.find(c => c.id === contactId); if (!contact) return;
+    const key = roomKey(contact); if (typingContacts.has(key)) return;
+    const history = state.dmRooms[key] ||= [];
+    const original = history.find(message => message.id === messageId && message.role === 'user'); if (!original) return;
+    const text = original.content;
+    history.push({ id: uid(), role: 'user', content: text, createdAt: now() }); typingContacts.add(key); render();
+    try {
+        const answer = await generatePrivateReply(contact, key, history, text, history.length - 1);
+        history.push({ id: uid(), role: 'assistant', content: answer || '（没有收到回复）', createdAt: now() });
+    } catch (error) { history.push({ id: uid(), role: 'assistant', content: '发送失败：' + error.message, createdAt: now(), error: true }); }
+    finally { typingContacts.delete(key); }
+    maybeCompressRoom(key, history);
+    await saveState(); render();
+}
+
 async function refreshPrivateMessage(contactId, messageId) {
     ensureMessagingState(); const contact = state.contacts.find(c => c.id === contactId); if (!contact) return;
     const key = roomKey(contact); if (typingContacts.has(key)) return;
@@ -624,6 +651,7 @@ async function onClick(event) {
         const text = prompt('修改消息：', message.content); if (!text?.trim()) return;
         message.content = text.trim(); message.createdAt = now(); rebuildRoomMemory(key, state.dmRooms[key]); await saveState(); render();
     }
+    if (action === 'resend-user-message') await resendPrivateMessage(target.dataset.contactId, target.dataset.id);
     if (action === 'delete-user-message' && confirm('删除这条消息？')) {
         const contact = state.contacts.find(c => c.id === target.dataset.contactId); if (!contact) return;
         const key = roomKey(contact); state.dmRooms[key] = (state.dmRooms[key] || []).filter(m => !(m.id === target.dataset.id && m.role === 'user')); rebuildRoomMemory(key, state.dmRooms[key]); await saveState(); render();
