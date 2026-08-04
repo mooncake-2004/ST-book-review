@@ -202,7 +202,7 @@ function renderMessages() {
     const key = roomKey(contact);
     const history = state.dmRooms[key] ||= [];
     const contacts = state.contacts.map(c => `<button class="stbr-contact ${c.id === contact.id ? 'active' : ''}" data-action="select-contact" data-id="${c.id}"><span class="stbr-avatar">${escapeHtml(c.name.slice(0, 1))}</span><span>${escapeHtml(c.name)}</span>${c.type !== 'screenwriter' ? `<i data-action="remove-contact" data-id="${c.id}" title="删除联系人" class="fa-solid fa-xmark"></i>` : ''}</button>`).join('');
-    const messages = history.map(m => `<div class="stbr-bubble ${m.role}" data-message-id="${m.id}"><div class="stbr-message-wrap"><span>${escapeHtml(m.content)}</span>${m.role === 'assistant' ? `<div class="stbr-message-actions"><button data-action="refresh-message" data-contact-id="${contact.id}" data-id="${m.id}"><i class="fa-solid fa-rotate"></i> 刷新</button><button data-action="delete-message" data-contact-id="${contact.id}" data-id="${m.id}"><i class="fa-solid fa-trash"></i> 删除</button></div>` : ''}</div></div>`).join('');
+    const messages = history.map(m => `<div class="stbr-bubble ${m.role}" data-message-id="${m.id}"><div class="stbr-message-wrap"><span>${escapeHtml(m.content)}</span>${m.role === 'assistant' ? `<div class="stbr-message-actions"><button data-action="refresh-message" data-contact-id="${contact.id}" data-id="${m.id}"><i class="fa-solid fa-rotate"></i> 刷新</button><button data-action="delete-message" data-contact-id="${contact.id}" data-id="${m.id}"><i class="fa-solid fa-trash"></i> 删除</button></div>` : m.role === 'user' ? `<div class="stbr-message-actions"><button data-action="edit-user-message" data-contact-id="${contact.id}" data-id="${m.id}"><i class="fa-solid fa-pen"></i> 修改</button><button data-action="delete-user-message" data-contact-id="${contact.id}" data-id="${m.id}"><i class="fa-solid fa-trash"></i> 删除</button></div>` : ''}</div></div>`).join('');
     const typing = typingContacts.has(key) ? '<div class="stbr-bubble assistant stbr-typing"><div class="stbr-message-wrap"><span><i class="fa-solid fa-ellipsis fa-beat-fade"></i> 回复中</span></div></div>' : '';
     const memory = state.dmMemories[key] ? `<details class="stbr-memory-note"><summary><i class="fa-solid fa-brain"></i> 已生成本地压缩记忆</summary><p>${escapeHtml(state.dmMemories[key])}</p></details>` : '';
     return `<div class="stbr-messenger"><aside class="stbr-contact-pane"><div class="stbr-contact-title">私信</div><div class="stbr-contact-list">${contacts}</div><form id="stbr-add-contact" class="stbr-add-contact"><input class="stbr-input" name="name" maxlength="30" placeholder="输入人物名"><button title="新增私信人物"><i class="fa-solid fa-plus"></i></button></form></aside>
@@ -617,6 +617,16 @@ async function onClick(event) {
     if (action === 'delete-message' && confirm('删除这条回复？')) {
         const contact = state.contacts.find(c => c.id === target.dataset.contactId); if (!contact) return;
         const key = roomKey(contact); state.dmRooms[key] = (state.dmRooms[key] || []).filter(m => m.id !== target.dataset.id); rebuildRoomMemory(key, state.dmRooms[key]); await saveState(); render();
+    }
+    if (action === 'edit-user-message') {
+        const contact = state.contacts.find(c => c.id === target.dataset.contactId); if (!contact) return;
+        const key = roomKey(contact); const message = (state.dmRooms[key] || []).find(m => m.id === target.dataset.id && m.role === 'user'); if (!message) return;
+        const text = prompt('修改消息：', message.content); if (!text?.trim()) return;
+        message.content = text.trim(); message.createdAt = now(); rebuildRoomMemory(key, state.dmRooms[key]); await saveState(); render();
+    }
+    if (action === 'delete-user-message' && confirm('删除这条消息？')) {
+        const contact = state.contacts.find(c => c.id === target.dataset.contactId); if (!contact) return;
+        const key = roomKey(contact); state.dmRooms[key] = (state.dmRooms[key] || []).filter(m => !(m.id === target.dataset.id && m.role === 'user')); rebuildRoomMemory(key, state.dmRooms[key]); await saveState(); render();
     }
     if (action === 'remove-contact') {
         event.stopPropagation(); if (!confirm('删除这个私信联系人及全部聊天记录？')) return;
