@@ -2,8 +2,7 @@ import { renderExtensionTemplateAsync } from '/scripts/extensions.js';
 
 const EXT_FOLDER = 'third-party/ST-book-review';
 const STORE_KEY = 'st_book_review_v1';
-const DEFAULT_IN_PROMPT = `你就是小说世界里的“{name}”，正在故事内用即时消息和用户聊天。你必须以角色本人身份回应，不知道自己在被扮演。像微信聊天一样自然、口语化、简短，通常1到3句，尽量不超过80字；不要写旁白、动作描写、标题或长段分析。`;
-const DEFAULT_OUT_PROMPT = `你是现实/作品外负责扮演“{name}”的演员或扮演者，不是“{name}”本人。绝对不要用角色本人的身份、记忆或口吻冒充角色；你清楚角色只是你出演的对象，可以从演员视角聊表演、剧本、角色感受、剧情和日常。像微信聊天一样自然、口语化、简短，通常1到3句，尽量不超过80字。`;
+const DEFAULT_IN_PROMPT = `你就是小说世界里的“{name}”，正在故事内用即时消息和用户聊天。保持平静、克制、自然，不要轻易激动、惊叹或过度热情；除非剧情明确要求，否则不使用连续感叹号、夸张语气或煽情表达。必须以角色本人身份回应，不知道自己在被扮演。像微信聊天一样自然、口语化、简短，通常1到3句，尽量不超过80字；不要写旁白、动作描写、标题或长段分析。`; const DEFAULT_OUT_PROMPT = `你是现实/作品外负责扮演“{name}”的演员或扮演者，不是“{name}”本人。保持冷静、温和、低调的聊天语气，不要轻易激动、惊叹或过度热情；除非语境确实需要，否则避免连续感叹号、夸张语气和煽情表达。绝对不要用角色本人的身份、记忆或口吻冒充角色；你清楚角色只是你出演的对象，可以从演员视角聊表演、剧本、角色感受、剧情和日常。像微信聊天一样自然、口语化、简短，通常1到3句，尽量不超过80字。`;
 const DEFAULTS = { pluginEnabled: true, bubbleEnabled: true, interfaceEnabled: true, contextDepth: 12, reviewerName: '', apiMode: 'main', apiBaseUrl: '', apiKey: '', apiModel: '', apiModels: [], inChatPrompt: DEFAULT_IN_PROMPT, outChatPrompt: DEFAULT_OUT_PROMPT, compressionEnabled: true, compressionLimit: 30 };
 let state = null;
 let root = null;
@@ -238,14 +237,14 @@ function renderSettings() {
       <section class="stbr-section stbr-about"><b>ST Book Review · 1.7.2</b><p>书评区与论坛式私信均绑定当前 SillyTavern 对话保存。</p></section>`;
 }
 
-function render() {
+function setupFabDrag() { const fab = root?.querySelector('#stbr-fab'); if (!fab || fab.dataset.dragReady) return; fab.dataset.dragReady = '1'; let dragging = false; let moved = false; let offsetX = 0; let offsetY = 0; fab.addEventListener('pointerdown', event => { if (event.button !== undefined && event.button !== 0) return; const rect = fab.getBoundingClientRect(); dragging = true; moved = false; offsetX = event.clientX - rect.left; offsetY = event.clientY - rect.top; fab.classList.add('is-dragging'); fab.setPointerCapture?.(event.pointerId); event.preventDefault(); }); fab.addEventListener('pointermove', event => { if (!dragging) return; moved = true; const width = fab.offsetWidth; const height = fab.offsetHeight; const left = Math.max(8, Math.min(window.innerWidth - width - 8, event.clientX - offsetX)); const top = Math.max(8, Math.min(window.innerHeight - height - 8, event.clientY - offsetY)); fab.style.left = `${left}px`; fab.style.top = `${top}px`; fab.style.right = 'auto'; fab.style.bottom = 'auto'; }); const finish = event => { if (!dragging) return; dragging = false; fab.classList.remove('is-dragging'); fab.releasePointerCapture?.(event.pointerId); if (moved) { fab.dataset.dragged = '1'; event.stopPropagation(); } }; fab.addEventListener('pointerup', finish); fab.addEventListener('pointercancel', finish); fab.addEventListener('click', event => { if (fab.dataset.dragged === '1') { fab.dataset.dragged = '0'; event.preventDefault(); event.stopImmediatePropagation(); } }, true); } function dedupeExtensionSettings() { const entries = [...new Set(document.querySelectorAll('#stbr-extension-settings, .stbr-extension-settings'))]; entries.slice(1).forEach(entry => entry.remove()); } function render() {
     if (!root) return;
     const fab = root.querySelector('#stbr-fab');
     if (fab) fab.hidden = !state.settings.pluginEnabled || !state.settings.bubbleEnabled;
     const menuEntry = document.querySelector('#stbr-menu-entry');
     if (menuEntry) menuEntry.hidden = !state.settings.pluginEnabled || !state.settings.interfaceEnabled;
     if (!state.settings.pluginEnabled) closePanel();
-    syncExtensionControls();
+    syncExtensionControls(); dedupeExtensionSettings(); setupFabDrag();
     root.querySelectorAll('.stbr-tab').forEach(button => button.classList.toggle('active', button.dataset.tab === activeTab));
     const body = root.querySelector('#stbr-body');
     body.classList.toggle('stbr-messages-body', activeTab === 'messages');
@@ -361,9 +360,9 @@ async function fetchModels() {
 }
 
 function privateChatPrompt(contact) {
-    if (contact.type === 'screenwriter') return '你叫“编剧”，是作品之外的微信聊天伙伴，可以聊小说，也可以聊任何日常话题。回复自然、口语化、简短，通常1到3句，尽量不超过80字；不要写长段分析、旁白、动作或标题。';
+    if (contact.type === 'screenwriter') return '你叫“编剧”，是作品之外的微信聊天伙伴，可以聊小说，也可以聊任何日常话题。保持平静、克制、自然，不要轻易激动、惊叹或过度热情；除非语境确实需要，否则避免连续感叹号、夸张语气和煽情表达。回复自然、口语化、简短，通常1到3句，尽量不超过80字；不要写长段分析、旁白、动作或标题。';
     const template = contact.chatMode === 'in' ? state.settings.inChatPrompt : state.settings.outChatPrompt;
-    return String(template || (contact.chatMode === 'in' ? DEFAULT_IN_PROMPT : DEFAULT_OUT_PROMPT)).replaceAll('{name}', contact.name);
+    return `${String(template || (contact.chatMode === 'in' ? DEFAULT_IN_PROMPT : DEFAULT_OUT_PROMPT)).replaceAll('{name}', contact.name)}\n补充语气要求：保持冷静、克制、自然，先理解对方再回应；不要动辄兴奋或大惊小怪，不使用连续感叹号、夸张语气、煽情排比或过度热情的感叹。`;
 }
 
 function localMemorySummary(previous, messages) {
@@ -576,7 +575,7 @@ async function mountExtensionSettings() {
         panel.querySelectorAll('[data-stbr-setting]').forEach(input => input.addEventListener('change', async event => { state.settings[event.target.dataset.stbrSetting] = event.target.checked; await saveState(); render(); }));
         panel.querySelector('.stbr-ext-open')?.addEventListener('click', () => openPanel('reviews'));
     });
-    syncExtensionControls();
+    syncExtensionControls(); dedupeExtensionSettings(); setupFabDrag();
 }
 
 async function init() {
