@@ -1,5 +1,5 @@
 // === 1. MODULES, CONSTANTS, AND RUNTIME STATE ===
-import { renderExtensionTemplateAsync } from '/scripts/extensions.js';
+import { getContext as getSillyTavernContext, renderExtensionTemplateAsync } from '/scripts/extensions.js';
 
 const EXT_FOLDER = 'third-party/ST-book-review';
 const STORE_KEY = 'st_book_review_v1';
@@ -20,7 +20,7 @@ const reviewerName = () => state.settings.reviewerName?.trim() || context.name1 
 
 // === 2. STATE PERSISTENCE, STORY DATA, AND AI REQUESTS ===
 function getContext() {
-    return window.SillyTavern?.getContext?.() || window.getContext?.() || {};
+    return getSillyTavernContext?.() || window.SillyTavern?.getContext?.() || window.getContext?.() || {};
 }
 
 function emptyState() {
