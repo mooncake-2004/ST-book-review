@@ -557,38 +557,27 @@ async function generatePrivateReply(contact, key, history, userText, end = histo
     return await callAI(privateChatPrompt(contact), compressedHistory(key, history, end), userText);
 }
 
-async function sendRoom(form) {
-    ensureMessagingState();
-    const contact = state.contacts.find(c => c.id === form.dataset.contactId) || state.contacts[0];
-    const key = roomKey(contact);
-    const input = form.elements.content;
-    const text = input.value.trim(); if (!text) return;
-    const history = state.dmRooms[key] ||= [];
-    history.push({ id: uid(), role: 'user', content: text, createdAt: now() }); input.value = ''; typingContacts.add(key); render();
-    try {
-        const answer = await generatePrivateReply(contact, key, history, text, history.length - 1);
-        history.push({ id: uid(), role: 'assistant', content: answer || '（没有收到回复）', createdAt: now() });
-    } catch (error) { history.push({ id: uid(), role: 'assistant', content: `发送失败：${error.message}`, createdAt: now(), error: true }); }
-    finally { typingContacts.delete(key); }
-    maybeCompressRoom(key, history);
-    await saveState(); render();
-}
-
-async function resendPrivateMessage(contactId, messageId) {
-    ensureMessagingState();
-    const contact = state.contacts.find(c => c.id === contactId); if (!contact) return;
+async function sendPrivateMessage(contact, text) {
+    const content = String(text || '').trim(); if (!content) return;
     const key = roomKey(contact); if (typingContacts.has(key)) return;
     const history = state.dmRooms[key] ||= [];
-    const original = history.find(message => message.id === messageId && message.role === 'user'); if (!original) return;
-    const text = original.content;
-    history.push({ id: uid(), role: 'user', content: text, createdAt: now() }); typingContacts.add(key); render();
+    history.push({ id: uid(), role: 'user', content, createdAt: now() }); typingContacts.add(key); render();
     try {
-        const answer = await generatePrivateReply(contact, key, history, text, history.length - 1);
+        const answer = await generatePrivateReply(contact, key, history, content, history.length - 1);
         history.push({ id: uid(), role: 'assistant', content: answer || '（没有收到回复）', createdAt: now() });
     } catch (error) { history.push({ id: uid(), role: 'assistant', content: '发送失败：' + error.message, createdAt: now(), error: true }); }
     finally { typingContacts.delete(key); }
     maybeCompressRoom(key, history);
     await saveState(); render();
+}
+
+async function sendRoom(form) {
+    ensureMessagingState();
+    const contact = state.contacts.find(c => c.id === form.dataset.contactId) || state.contacts[0];
+    const input = form.elements.content;
+    const text = input.value.trim(); if (!text) return;
+    input.value = '';
+    await sendPrivateMessage(contact, text);
 }
 
 async function refreshPrivateMessage(contactId, messageId) {
@@ -651,7 +640,12 @@ async function onClick(event) {
         const text = prompt('修改消息：', message.content); if (!text?.trim()) return;
         message.content = text.trim(); message.createdAt = now(); rebuildRoomMemory(key, state.dmRooms[key]); await saveState(); render();
     }
-    if (action === 'resend-user-message') await resendPrivateMessage(target.dataset.contactId, target.dataset.id);
+    if (action === 'resend-user-message') {
+        ensureMessagingState();
+        const contact = state.contacts.find(c => c.id === target.dataset.contactId); if (!contact) return;
+        const key = roomKey(contact); const message = (state.dmRooms[key] || []).find(m => m.id === target.dataset.id && m.role === 'user'); if (!message) return;
+        await sendPrivateMessage(contact, message.content);
+    }
     if (action === 'delete-user-message' && confirm('删除这条消息？')) {
         const contact = state.contacts.find(c => c.id === target.dataset.contactId); if (!contact) return;
         const key = roomKey(contact); state.dmRooms[key] = (state.dmRooms[key] || []).filter(m => !(m.id === target.dataset.id && m.role === 'user')); rebuildRoomMemory(key, state.dmRooms[key]); await saveState(); render();
